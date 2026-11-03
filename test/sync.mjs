@@ -11,6 +11,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const WIN_ENV = process.platform !== 'win32' ? {} : Object.fromEntries(
+  ['SystemRoot', 'SystemDrive', 'windir', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA']
+    .filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]]));
 const GW_PORT = 6294;
 const SYNC_PORT = 6295;
 const TOKEN = 'sk-test-client-token';
@@ -46,6 +49,7 @@ writeConfig({
 
 const gateway = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], {
   env: {
+    ...WIN_ENV,
     PATH: process.env.PATH,
     HOME: process.env.HOME,
     CANNBOT_PROXY_PORT: String(GW_PORT),
@@ -95,6 +99,7 @@ async function spawnWith(sync, port, label) {
   writeConfig(sync);
   const child = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], {
     env: {
+      ...WIN_ENV,
       PATH: process.env.PATH,
       HOME: process.env.HOME,
       CANNBOT_PROXY_PORT: String(GW_PORT + 10 + Math.floor(Math.random() * 200)),

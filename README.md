@@ -7,8 +7,9 @@
 **个人工作台**（同一页的左栏第一组，`http://127.0.0.1:8484/#todos`）：跨 agent 的待办事项（人与 agent 经
 `/v1/todos` 共用）+ 时间段 AI 工作总结（读本机各 agent 的会话记录，两级总结成给上级的汇报）。
 
-> 2026-11 项目更名 **personal_gateway**：运行时目录 `~/.local/share/personal-gateway/`、
-> launchd label `cn.hicann.personal-gateway`、环境变量前缀 `PGW_`。重跑 `./install.sh`
+> 2026-11 项目更名 **personal_gateway**：macOS 运行时目录 `~/.local/share/personal-gateway/`、
+> launchd label `cn.hicann.personal-gateway`；Windows 运行时目录 `%LOCALAPPDATA%\personal-gateway\`、
+> 任务计划程序任务 `PersonalGateway`；环境变量前缀 `PGW_`。重跑 `./install.sh`
 > 自动迁移旧目录 `~/.local/share/cannbot-gateway-proxy/`（数据全保留、旧 label 清理）；
 > 旧前缀 `CANNBOT_*` 环境变量仍被兜底识别（lib/env.mjs，PGW_ 优先）。
 
@@ -48,17 +49,19 @@ zcode CLI / Claude Code / opencode / curl …（全部 Agent）
 | `lib/` | 服务端模块：config（providers.json）/ models（模型目录与路由）/ upstream（统一上游请求）/ auth/（cannwork、static 凭证链）/ translate/（Anthropic↔OpenAI 双向翻译）/ proxy-openai、proxy-anthropic（两条入站管道）/ stats / log / gwauth / util / todos（工作台待办）/ report（总结管线：四源适配器 + 素材收集 + 生成状态机）/ report-prompts（总结 prompt 与阈值，调质量改这里） |
 | `index.html` | 单页应用（`http://127.0.0.1:8484/`）：左栏两级导航，八个视图——首屏 / OpenCode 电视墙 / 待办 / 汇报 / 总览 / 统计 / 诊断 / 配置 |
 | `theme.css` | 共享主题：令牌 / 骨架 / 左栏布局契约 / 通用组件（`/theme.css` 提供） |
-| `providers.template.json` | providers.json 模板（install.sh 首次安装时生成到运行时目录） |
+| `providers.template.json` | providers.json 模板（install.sh / install.ps1 首次安装时生成到运行时目录） |
 | `test/mock-upstream.mjs` `test/smoke.mjs` | 端到端冒烟测试：mock 双协议上游 + 三百余项断言（`node test/smoke.mjs`） |
-| `install.sh` / `uninstall.sh` / `status.sh` / `plist.template` | launchd 部署与状态 |
+| `install.sh` / `uninstall.sh` / `status.sh` / `plist.template` | macOS：launchd 部署与状态 |
+| `install.ps1` / `uninstall.ps1` / `status.ps1` | Windows：任务计划程序登录自启、运行时副本、状态 |
 | `cannbot-creds.sh` | cannbot 订阅凭证诊断（可选；`--sync-zcode` 重写 zcode 指向网关并写入 token） |
 | `打开管理界面.command` | **双击即可**：自动确保网关已启动并打开管理台 |
-| `打开管理界面.bat` | Windows 版双击脚本：healthz 探活、未启动则最小化窗口跑 `node server.mjs`，再打开管理台 |
+| `打开管理界面.bat` | Windows 版双击脚本：healthz 探活、未启动则优先拉起登录任务，否则最小化窗口跑 `node server.mjs`，再打开管理台 |
 
-**两个目录的关系**：本文件夹是项目源（source of truth）；`install.sh` 会把 `server.mjs + lib/ + index.html + theme.css`
-拷贝到运行时目录 `~/.local/share/personal-gateway/`（providers.json、日志、VK 缓存、stats.json 也
-都在那里），launchd 实际运行的是该副本——macOS 对桌面目录有 TCC 保护，launchd 读不到桌面。
-**改动代码后需重跑 `./install.sh` 才生效**；改 `providers.json` 不用（网关按 mtime 热加载）。
+**两个目录的关系**：本文件夹是项目源（source of truth）；`install.sh`（macOS）会把 `server.mjs + lib/ + index.html + theme.css`
+拷贝到运行时目录 `~/.local/share/personal-gateway/`，`install.ps1`（Windows）拷贝到
+`%LOCALAPPDATA%\personal-gateway\`（可用 `PGW_RUNTIME_DIR` 覆盖）。providers.json、日志、VK 缓存、
+stats.json 也都在运行时目录；服务实际运行的是该副本。
+**改动代码后需重跑对应安装脚本才生效**；改 `providers.json` 不用（网关按 mtime 热加载）。
 
 ## 快速开始
 
@@ -75,18 +78,38 @@ $EDITOR ~/.local/share/personal-gateway/providers.json   # 填入各订阅凭证
 
 ### Windows 上跑
 
-核心（网关/路由/翻译/统计/待办/管理台）是纯 Node，跨平台直接可用：
+核心（网关/路由/翻译/统计/待办/管理台）是纯 Node，跨平台直接可用。Windows 用 PowerShell 安装：
 
-```bat
-node server.mjs                 # 从仓库目录前台跑；providers.json 等运行时文件落在本目录
+```powershell
+# 在项目目录打开 PowerShell（通常无需管理员；提示权限不足时用管理员 PowerShell 重跑）
+.\install.ps1                   # 默认端口 8484；冲突时: .\install.ps1 8485
+#   - 拷贝运行时副本到 %LOCALAPPDATA%\personal-gateway\
+#   - 首次生成 providers.json（仅当前用户可读，含随机网关 token）
+#   - 创建任务计划程序登录自启任务 PersonalGateway，并立即启动
+.\status.ps1                    # 看各上游凭证体检结果
+.\uninstall.ps1                 # 停服务 + 移除登录任务；加 -RevertConfigs 回滚 zcode 配置
 ```
 
-与 macOS 的差异：launchd 部署脚本（install.sh / status.sh / plist.template）不可用，
-常驻改用任务计划程序或 NSSM；显示器切换功能依赖 m1ddc（Apple Silicon 专有），Windows 上
-该功能优雅降级、不影响其他部分；汇报功能读会话库需系统有 `sqlite3` CLI（Windows 从
-sqlite.org 下 tools 包加入 PATH，或设 `PGW_SQLITE3` 指完整路径）。Claude Code / Cursor /
-zcode 的会话目录在 Windows 用户目录下结构相同；opencode 不在默认位置时用 `PGW_OPENCODE_DB` 指过去。
-双击 `打开管理界面.bat` 即可探活 + 启动 + 打开管理台。
+如果 PowerShell 提示脚本被禁止运行，用
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`（或先 `Unblock-File .\*.ps1`）。
+改动 `server.mjs` / `lib/` / `index.html` / `theme.css` 后重跑 `.\install.ps1` 才生效；
+改 `providers.json` 不用（网关按 mtime 热加载）。`install.ps1` 幂等，升级不覆盖已有凭证。
+
+也可以不安装、从仓库目录前台跑：
+
+```bat
+node server.mjs                 # providers.json 等运行时文件落在本目录
+打开管理界面.bat                # 探活 + 未启动则拉起 + 打开管理台
+```
+
+与 macOS 的差异：macOS 的 `install.sh / status.sh / plist.template` 不可用，Windows 用
+`install.ps1 / status.ps1`（任务计划程序登录自启，不依赖 NSSM）。`/admin/restart` 与
+`/admin/stop` 在 Windows 上同样可用：restart 由进程自身关监听后以 detached 方式拉起新实例，
+stop 直接退出（登录任务只在登录时触发，不会立刻拉回）。显示器切换功能依赖 m1ddc
+（Apple Silicon 专有），Windows 上该功能优雅降级、不影响其他部分；汇报功能读会话库需系统有
+`sqlite3` CLI（Windows 从 sqlite.org 下 tools 包加入 PATH，或设 `PGW_SQLITE3` 指完整路径）。
+Claude Code / Cursor / zcode 的会话目录在 Windows 用户目录下结构相同；opencode 不在默认位置时用
+`PGW_OPENCODE_DB` 指过去。
 
 ## providers.json 详解
 
@@ -147,6 +170,8 @@ zcode 的会话目录在 Windows 用户目录下结构相同；opencode 不在�
   ⚠️ launchd 环境里 shell 的 env 不生效——用 `token`/`tokenFile` 最稳（tokenEnv 需要
   把变量写进 plist 的 `EnvironmentVariables`，而重跑 `./install.sh` 会重新生成 plist、
   手工加的环境变量会丢——所以要沿用 tokenEnv 就每次重装后补回去，或干脆换 tokenFile）。
+  Windows 的任务计划程序登录任务会继承**用户环境变量**，把变量设成用户级即可（设置后重新登录）；
+  重跑 `install.ps1` 不会清掉它们。
 - **费用统计单价**：`pricing` 节可覆盖任意模型单价（键 `模型名` 或 `pid/模型名`，美元 / 1M tokens）；
   未覆盖的模型用内置参考价（`lib/pricing.mjs`，参考 OpenRouter 公开牌价与各家官方定价量级估算）。
   费用是**按牌价折算的等效成本**——订阅制上游（Kimi Code / GLM Coding Plan / CANNWork）实际是
@@ -478,28 +503,37 @@ node test/smoke.mjs               # 端到端回归（不依赖真实订阅）
 node test/robustness.mjs          # 稳健性回归（Multi-byte / 断流 / 原型污染 / 跨站 / 并行 tool_use）
 ```
 
+Windows：
+
+```powershell
+.\status.ps1                       # 服务 + 各上游凭证 + 最近请求
+Get-Content "$env:LOCALAPPDATA\personal-gateway\proxy.log" -Tail 20 -Wait
+node test/smoke.mjs                # 同上；汇报相关用例需要 sqlite3 在 PATH
+```
+
 | 现象 | 原因与处理 |
 |---|---|
-| 401 `gateway_auth_failed` | 客户端没带/带错网关 token → 用 install.sh 打印的 token |
+| 401 `gateway_auth_failed` | 客户端没带/带错网关 token → 用 install.sh / install.ps1 打印的 token |
 | 502 `jwt_expired` / `jwt_missing` | CANNWork 未登录/过期 → 重新登录即可 |
-| 502 `provider_auth_missing` | 静态 token 未配置 → providers.json 补 auth；注意 launchd 里 env 不生效 |
+| 502 `provider_auth_missing` | 静态 token 未配置 → providers.json 补 auth；macOS 注意 launchd 里 env 不生效 |
 | 上游 403 "Model not allowed" | 订阅账号无该模型权限，与网关无关 |
 | 模型不在 /v1/models | 该订阅 models.source 或列表配置问题；也可显式 `pid/model` 直呼（defaultProvider 兜底） |
-| 连接拒绝 | 网关没运行 → `./install.sh`；换过端口则客户端同步改 |
-| 改了代码不生效 | 重跑 `./install.sh`（launchd 跑运行时副本）；改 providers.json 则即时生效 |
+| 连接拒绝 | 网关没运行 → macOS `./install.sh` / Windows `.\install.ps1`；换过端口则客户端同步改 |
+| 改了代码不生效 | 重跑对应安装脚本（服务跑运行时副本）；改 providers.json 则即时生效 |
 
-### 环境变量（写进 launchd plist 或前台导出）
+### 环境变量（macOS 写进 launchd plist / Windows 设用户环境变量 / 前台导出）
 
 前缀 `PGW_`（2026-11 更名前为 `CANNBOT_`，旧名仍被识别作兜底）：
 
 | 变量 | 缺省 | 说明 |
 |---|---|---|
-| `PGW_PROXY_PORT` | `8484` | 监听端口（`./install.sh <端口>` 一步到位；providers.json gateway.port 亦可） |
+| `PGW_PROXY_PORT` | `8484` | 监听端口（`./install.sh <端口>` / `.\install.ps1 <端口>` 一步到位；providers.json gateway.port 亦可） |
+| `PGW_RUNTIME_DIR` | Windows `%LOCALAPPDATA%\personal-gateway` | 仅 Windows 安装脚本：运行时目录覆盖（macOS 固定 `~/.local/share/personal-gateway`） |
 | `PGW_CONFIG_FILE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` / `PGW_VK_CACHE` / `PGW_STATS_SYNC_FILE` | 运行时目录 | 各运行时产物位置覆盖（测试用；VK 缓存含活凭证，前台联调务必指到临时目录） |
 | `PGW_SESSION_FILE` / `PGW_AUTH_FILE` | opencode 目录 | cannwork 凭证来源（provider auth 里也可配） |
 | `PGW_EXCLUDE_MODELS` | 空 | 追加到各 provider models.exclude 的隐藏模型 |
 | `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` | 各 agent 真实数据目录 | 报告数据源根路径覆盖（测试用） |
-| `PGW_M1DDC` | `~/bin/m1ddc` | 显示器切换工具路径（测试用 mock） |
+| `PGW_M1DDC` | macOS `~/bin/m1ddc`，Windows 无 | 显示器切换工具路径（Windows 默认降级，可指向兼容工具；测试用 mock） |
 | `PGW_SQLITE3` | macOS `/usr/bin/sqlite3`，其余平台查 PATH | sqlite3 CLI 路径（汇报读会话库用；Windows 装 sqlite.org tools 后可用 PATH） |
 | `PGW_MAX_BODY_MB` | `32` | 请求体上限（providers.json gateway.maxBodyMB 亦可） |
 | `PGW_REPORT_RETRY_DELAY_MS` | `1500` | 报告两级总结失败重试间隔 |
@@ -510,14 +544,21 @@ node test/robustness.mjs          # 稳健性回归（Multi-byte / 断流 / 原�
 ## 回滚（完全撤销）
 
 ```bash
+# macOS
 ./uninstall.sh --revert-configs   # 停服务 + 回滚 zcode 配置（有备份的那份；v2 无备份会显式警告并给手工指引）
 rm -rf ~/Desktop/project/personal_workshop
 ```
 
+```powershell
+# Windows
+.\uninstall.ps1 -RevertConfigs    # 停服务 + 移除登录任务 + 回滚 zcode 配置
+Remove-Item -LiteralPath <项目目录> -Recurse -Force
+```
+
 卸载会先把 `providers.json` / `todos.json` / `reports.json` 与坏文件自愈的 `*.bad` 现场备份
-抢救到 `~/.local/share/personal-gateway.data-backup-<时间戳>/` 再清理运行时目录
-（新旧目录都会清理）。
-脚本演练/测试时务必带 `PGW_SKIP_LAUNCHCTL=1`（旧名 `CGP_SKIP_LAUNCHCTL` 也认；跳过
+抢救到运行时目录旁的 `.data-backup-<时间戳>/`（macOS `~/.local/share/personal-gateway.data-backup-*`，
+Windows `%LOCALAPPDATA%\personal-gateway.data-backup-*`）再清理运行时目录（新旧目录都会清理）。
+macOS 脚本演练/测试时务必带 `PGW_SKIP_LAUNCHCTL=1`（旧名 `CGP_SKIP_LAUNCHCTL` 也认；跳过
 launchctl 步骤——launchctl 作用于用户域、与 HOME 无关，沙箱 HOME 下跑也会停掉真实服务）。
 
 ## 已知注意事项

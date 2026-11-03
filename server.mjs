@@ -14,13 +14,14 @@
 //
 // 运行时文件（proxy.log / vk-cache.json / stats.json）落在本脚本所在目录，随项目文件夹整体移动。
 // 端口: 8484（环境变量 PGW_PROXY_PORT 优先，其次 providers.json gateway.port），只绑 127.0.0.1
-// 推荐由 launchd 托管（见 install.sh），也可前台直接 `node server.mjs` 运行。
+// 常驻：macOS 由 launchd 托管（install.sh），Windows 由任务计划程序托管（install.ps1）；
+// 也可前台直接 `node server.mjs` 运行。
 
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { log, tailLog } from './lib/log.mjs';
 import { getConfig, tryGetConfig, getProvider, bindInboundEndpoint } from './lib/config.mjs';
@@ -90,6 +91,56 @@ function launchctl(args) {
   execFile('/bin/launchctl', args, { timeout: 10_000 }, (e) => {
     if (e) log(`launchctl ${args.join(' ')} 失败: ${e.message}`);
   });
+}
+
+// ---- 非 launchd 平台（Windows / Linux）的自管重启与停止 --------------------
+// Windows 上由任务计划程序以「登录时」触发，进程退出后不会被自动拉回，因此：
+//   restart = 关闭全部监听后 detached 拉起一个新的 node server.mjs，再退出自己；
+//   stop    = 直接退出（任务计划程序不会因进程退出而重启它）。
+// closeSecondary 先关电视/同步监听，避免新进程抢不到端口。
+function closeSecondary() {
+  Promise.resolve(tvReady).then((tv) => { try { tv?.server?.close(); } catch {} });
+  Promise.resolve(syncReady).then((s) => { try { s?.server?.close(); } catch {} });
+  try { syncClientReady?.stop?.(); } catch {}
+}
+
+function restartSelf() {
+  flushStats();
+  closeSecondary();
+  let spawned = false;
+  const spawnNext = () => {
+    if (spawned) return;
+    spawned = true;
+    // 留 300ms 让电视/同步监听真正释放端口，再拉起新进程并退出自己；
+    // spawn 后立即 exit，主端口在子进程开始 bind 前就已释放。
+    setTimeout(() => {
+      try {
+        const child = spawn(process.execPath, [path.join(SCRIPT_DIR, 'server.mjs')], {
+          cwd: SCRIPT_DIR,
+          env: process.env,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.unref();
+      } catch (e) {
+        log(`重启失败，无法拉起新进程: ${e.message}`);
+      }
+      process.exit(0);
+    }, 300);
+  };
+  server.close(spawnNext);
+  // 不主动断开 keep-alive / 长连接的话，close 回调可能迟迟不触发，重启会卡住
+  server.closeAllConnections?.();
+  setTimeout(spawnNext, 1500).unref();
+}
+
+function stopSelf() {
+  flushStats();
+  closeSecondary();
+  server.close(() => process.exit(0));
+  server.closeAllConnections?.();
+  setTimeout(() => process.exit(0), 1500).unref();
 }
 
 // 请求模型 → { provider, model } 路由。查不到目录时回落默认上游原样透传（自愈新模型名）。
@@ -192,6 +243,10 @@ const server = http.createServer(async (req, res) => {
         ? ['bootout', LAUNCH_TARGET]
         : ['kickstart', '-k', LAUNCH_TARGET];
       return setTimeout(() => {
+        // Windows / Linux 没有 launchd：自己关监听、拉新进程 / 退出（见 restartSelf/stopSelf）
+        if (process.platform !== 'darwin') {
+          return stopping ? stopSelf() : restartSelf();
+        }
         // 更名过渡：新 label 没装过（launchctl 报错）时补打旧 label——
         // 未重跑 install.sh 的既有实例仍挂在旧 label 下，只打新 label 会静默无效
         launchctl(args);

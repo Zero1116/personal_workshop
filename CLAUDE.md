@@ -24,11 +24,20 @@ PGW_PROXY_PORT=8485 PGW_CONFIG_FILE="$HOME/.local/share/personal-gateway/provide
 curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
 ```
 
+Windows（PowerShell）：
+
+```powershell
+.\install.ps1 [端口]          # 拷贝运行时副本到 %LOCALAPPDATA%\personal-gateway 并注册登录自启任务 PersonalGateway
+.\uninstall.ps1 [-RevertConfigs]   # 停服务 + 移除登录任务；-RevertConfigs 回滚 zcode 配置
+.\status.ps1                  # 服务状态 + 各上游凭证体检 + 最近请求
+.\打开管理界面.bat            # 探活 + 拉起（优先任务计划程序）+ 打开管理台
+```
+
 ## ⚠️ 双目录设计（改代码必读）
 
-本目录是**项目源**（仓库名 `personal_workshop`，项目定位 2026-11 已更名 personal_gateway）；launchd 实际运行的是 `install.sh` 拷贝到 `~/.local/share/personal-gateway/` 的**运行时副本**（macOS TCC 限制 launchd 读不了桌面）。2026-10 及更早版本装在 `~/.local/share/cannbot-gateway-proxy/`，重跑 `./install.sh` 会把旧目录**整体迁移**到新目录（providers.json/待办/统计全保留）并清掉旧 label 的 plist。
+本目录是**项目源**（仓库名 `personal_workshop`，项目定位 2026-11 已更名 personal_gateway）；macOS 的 launchd 实际运行的是 `install.sh` 拷贝到 `~/.local/share/personal-gateway/` 的**运行时副本**（macOS TCC 限制 launchd 读不了桌面）；Windows 的任务计划程序运行 `install.ps1` 拷贝到 `%LOCALAPPDATA%\personal-gateway\` 的副本。2026-10 及更早版本装在 `~/.local/share/cannbot-gateway-proxy/`，重跑 `./install.sh` 会把旧目录**整体迁移**到新目录（providers.json/待办/统计全保留）并清掉旧 label 的 plist。
 
-**改动 `server.mjs`、`lib/`、`index.html`、`theme.css` 后必须重跑 `./install.sh` 才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、logs/proxy.err.log、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。环境变量前缀 2026-11 起 **CANNBOT_ → PGW_**（统一走 lib/env.mjs 读取：PGW_ 优先、同名旧 CANNBOT_ 兜底，旧 plist/外部脚本不至于一夜失效）。运行时文件位置可用 `PGW_CONFIG_FILE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` 覆盖；报告数据源根路径可用 `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
+**改动 `server.mjs`、`lib/`、`index.html`、`theme.css` 后必须重跑对应安装脚本（macOS `./install.sh` / Windows `.\install.ps1`）才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、`logs/proxy.err.log`、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。环境变量前缀 2026-11 起 **CANNBOT_ → PGW_**（统一走 lib/env.mjs 读取：PGW_ 优先、同名旧 CANNBOT_ 兜底，旧 plist/外部脚本不至于一夜失效）。运行时文件位置可用 `PGW_CONFIG_FILE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` 覆盖；报告数据源根路径可用 `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
 
 ## 架构（模块图）
 
@@ -127,6 +136,7 @@ lib/stats.mjs         流量/性能/费用统计（v2：days[].providers[pid].mo
 lib/pricing.mjs       模型单价表与费用折算（内置 OpenRouter 量级参考价；providers.json pricing 节可按
                       模型名或 pid/模型名 覆盖；费用=按牌价折算的等效成本，记账时点单价入账）
 lib/monitors.mjs      显示器输入源切换（m1ddc/DDC-CI over USB-C，串行队列 + 5s 状态缓存；
+                      Windows 无 m1ddc → available:false 优雅降级，其余功能不受影响；
                       **只认硬件事实**：屏 = System UUID、输入 = VCP60 值，不内置任何
                       方向/主机语义；名字全由用户填，留空显示编号（屏=UUID 前 8 位、
                       输入=「输入 N」）。默认值表在 config.mjs 的 defaultMonitors()——
@@ -278,8 +288,8 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
    静态 token 每请求解析。上游 401 → provider 策略重试一次（cannwork 强制重取 VK；static 不重试）；
    **403 不重试**（账号权限问题，直接透传）。
 3. **防自我代理环路**：providers 的 baseUrl 必须直连上游官方域名，绝不能指向网关自身端口。
-4. **providers.json 含全部订阅凭证**：0600、.gitignore 排除、绝不入库。模板是 providers.template.json
-   （`__CLIENT_TOKEN__` 占位由 install.sh 首次安装时以随机 token 生成，**升级不覆盖已有配置**）。
+4. **providers.json 含全部订阅凭证**：0600（Windows 收 ACL 到当前用户）、.gitignore 排除、绝不入库。模板是 providers.template.json
+   （`__CLIENT_TOKEN__` 占位由 install.sh / install.ps1 首次安装时以随机 token 生成，**升级不覆盖已有配置**）。
 
 ### 流量统计与性能采样
 
@@ -397,6 +407,8 @@ m1ddc 缺失降级提示）；
   流量即走 Anthropic 协议直通路径）。
 - launchd label：`cn.hicann.personal-gateway`（2026-11 前为 `cn.hicann.cannbot-gateway-proxy`，
   install/uninstall 都会对旧 label 做停用与清理；plist 由 `plist.template` sed 生成；端口经 `PGW_PROXY_PORT` 注入或运行时 `port` 文件记录）。旧版的分离热键守护 label `cn.hicann.cannbot-monitor-hotkeys` 已随功能移除，install/uninstall 仅保留对其历史安装遗留的清理路径。
+- Windows 任务计划程序任务：`PersonalGateway`（登录时触发，运行运行时目录下的
+  `start-gateway.ps1` 隐藏启动 `node server.mjs`；端口经 `PGW_PROXY_PORT` 注入）。
 
 ## 安全红线
 

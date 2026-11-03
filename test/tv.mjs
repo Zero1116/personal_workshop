@@ -17,6 +17,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const WIN_ENV = process.platform !== 'win32' ? {} : Object.fromEntries(
+  ['SystemRoot', 'SystemDrive', 'windir', 'ComSpec', 'PATHEXT', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA']
+    .filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]]));
 const GW_PORT = 6292;
 const TV_PORT = 6293;
 const TOKEN = 'sk-test-client-token';
@@ -47,6 +50,7 @@ writeConfig({ enabled: true, port: TV_PORT, bind: '127.0.0.1', tokens: [{ name: 
 
 const gateway = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], {
   env: {
+    ...WIN_ENV,
     PATH: process.env.PATH,
     HOME: process.env.HOME,
     CANNBOT_PROXY_PORT: String(GW_PORT),
@@ -326,6 +330,7 @@ async function spawnWith(tv, port, label) {
   writeConfig(tv);
   const child = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], {
     env: {
+      ...WIN_ENV,
       PATH: process.env.PATH, HOME: process.env.HOME,
       CANNBOT_PROXY_PORT: String(GW_PORT + 10),
       CANNBOT_CONFIG_FILE: configFile,
@@ -386,6 +391,7 @@ try {
     writeConfig({ enabled: true, port, bind: '127.0.0.1', tokens: [{ name: 'x', token: TV_TOKEN }], allowedCidrs: ['10.0.0.0/8'] });
     const child = spawn(process.execPath, [path.join(ROOT, 'server.mjs')], {
       env: {
+        ...WIN_ENV,
         PATH: process.env.PATH, HOME: process.env.HOME,
         CANNBOT_PROXY_PORT: String(GW_PORT + 10),
         CANNBOT_CONFIG_FILE: configFile,

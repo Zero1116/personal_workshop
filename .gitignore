@@ -30,3 +30,6 @@ providers.json
 
 stats-sync-hub.json
 stats-sync.json
+
+# 本地 opencode 缓存与权限配置
+.opencode/
