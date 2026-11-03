@@ -2652,8 +2652,25 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('.bat 只做转发：调用同目录 .ps1，自身不含业务判断',
       (() => {
         const src = fs.readFileSync(path.join(ROOT, 'deploy/打开管理界面.bat'), 'utf8');
-        return /-File "%~dp0[^"]+\.ps1"/.test(src) && /-ExecutionPolicy Bypass/.test(src);
+        // 允许两种写法：直接 "%~dp0X.ps1"，或先 set "PS1=...ps1" 再 -File "%PS1%"
+        const direct = /-File\s+"[^"]*\.ps1"/.test(src);
+        const viaVar = /set\s+"\w+=.*\.ps1"/i.test(src) && /-File\s+"%\w+%"/.test(src);
+        return (direct || viaVar) && /-ExecutionPolicy Bypass/.test(src)
+          && !/[^\x00-\x7F]/.test(src);
       })());
+    // 配对存在性：改名时只改了一个文件会让双击直接失败（曾把 .ps1 改名后 .bat 仍
+    // 引用旧名，本机因旧文件还在而测不出来，干净克隆才暴露）。
+    check('.bat 点名的 .ps1 确实存在（两个文件必须同名配对）',
+      (() => {
+        const dir = path.join(ROOT, 'deploy');
+        const bats = fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.bat'));
+        const missing = bats.filter((b) => {
+          const src = fs.readFileSync(path.join(dir, b), 'utf8');
+          const m = /-File "%~dp0([^"]+\.ps1)"/.exec(src);
+          return m && !fs.existsSync(path.join(dir, m[1]));
+        });
+        return bats.length > 0 && missing.length === 0;
+      })(), '有 .bat 引用了不存在的 .ps1');
     const sh = eolInfo('scripts/cannbot-creds.sh');
     check('.sh 必须是 LF 且无 BOM（CRLF 会让 bash 报 carriage-return 未找到命令）',
       sh.loneLf > 0 && sh.crlf === 0 && !sh.bom, JSON.stringify({ crlf: sh.crlf, loneLf: sh.loneLf, bom: sh.bom }));
