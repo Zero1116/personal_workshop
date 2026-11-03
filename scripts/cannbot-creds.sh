@@ -6,9 +6,9 @@
 #       （可选）把 ~/.zcode/cli/config.json 的 cannbot provider 重写为指向本地网关。
 #       多上游与网关 token 的配置在 ~/.local/share/personal-gateway/providers.json。
 #
-# 用法:
-#   ./cannbot-creds.sh                校验凭证并刷新 ./creds.json
-#   ./cannbot-creds.sh --sync-zcode   上述操作后，把 ~/.zcode/cli/config.json 的 cannbot provider 指向本地代理
+# 用法（脚本在 scripts/ 下）:
+#   ./scripts/cannbot-creds.sh                校验凭证并刷新 ./creds.json
+#   ./scripts/cannbot-creds.sh --sync-zcode   上述操作后，把 ~/.zcode/cli/config.json 的 cannbot provider 指向本地代理
 #
 # 凭证来源（与 server.mjs 同步，对齐 CANNWork 2.0.2+ 链路）:
 #   JWT ← ~/.local/share/opencode/session.json（CANNWork 扩展登录时写入，24h 有效）
@@ -34,7 +34,7 @@ _LOCAL_PORT="$(cat "$_RUNTIME_PORT_FILE" 2>/dev/null || cat "$HOME/.local/share/
 GW_PORT="${PGW_PROXY_PORT:-${CANNBOT_PROXY_PORT:-${_LOCAL_PORT:-8484}}}"
 PROXY_URL="${PGW_PROXY_URL:-${CANNBOT_PROXY_URL:-http://127.0.0.1:${GW_PORT}/v1}}"
 # creds.json 含实时 JWT+VK，默认写到运行时目录（不进桌面源目录/版本库/同步盘）；
-# 需要落在别处时：PGW_CREDS_FILE=/path/to/creds.json ./cannbot-creds.sh
+# 需要落在别处时：PGW_CREDS_FILE=/path/to/creds.json ./scripts/cannbot-creds.sh
 CREDS_DIR="${PGW_CREDS_DIR:-${CANNBOT_CREDS_DIR:-$HOME/.local/share/personal-gateway}}"
 mkdir -p "$CREDS_DIR"
 CREDS="${PGW_CREDS_FILE:-${CANNBOT_CREDS_FILE:-$CREDS_DIR/creds.json}}"

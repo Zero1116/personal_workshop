@@ -3,8 +3,8 @@ chcp 65001 >nul
 rem 打开管理界面.bat — 双击即可：确保网关已启动，并在浏览器打开网页管理台。
 rem Windows 版，与 打开管理界面.command 对应：launchd 部署仅 macOS；Windows 用
 rem install.ps1 安装到 %LOCALAPPDATA%\personal-gateway 并注册登录自启任务，
-rem 未安装时也可以直接从本目录跑 node（运行时文件落在 server.mjs 同目录）。
-cd /d "%~dp0"
+rem 未安装时也可以从仓库根跑 node（运行时文件落在 server.mjs 同目录）。
+cd /d "%~dp0.."
 where node >nul 2>&1
 if errorlevel 1 (
   echo 未找到 node.exe，请先安装 Node.js 18 或更高版本（https://nodejs.org/），然后重开本窗口。

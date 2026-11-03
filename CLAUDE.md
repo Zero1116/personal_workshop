@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-**个人网关（personal_gateway，仓库目录仍名 personal_workshop）= 统一订阅 API 网关 + 待办 + AI 工作总结**。网关部分：把多个订阅服务（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，本机所有 Agent（zcode CLI、Claude Code、opencode 等）统一调用。按请求体里的**模型名**路由到对应订阅（providers.json 声明），自动注入该订阅凭证；同协议**原样直通**，跨协议走**双向翻译**。工作台部分（同一页的左栏第一组）：跨 agent 的**待办事项**（`/v1/todos`，人与 agent 共用）+ **时间段 AI 工作总结**（读 Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录 → 两级总结成给上级的汇报）。**管理台与工作台是同一个页面（`index.html`）、八个视图**，左栏两级分组导航（#opencode 电视墙页内含全屏大屏监控面板，非独立视图）。
+**个人网关（personal_gateway，仓库目录仍名 personal_workshop）= 统一订阅 API 网关 + 待办 + AI 工作总结**。网关部分：把多个订阅服务（CANNWork、Kimi For Coding、GLM Coding Plan 等）集中接入一个本地网关，本机所有 Agent（zcode CLI、Claude Code、opencode 等）统一调用。按请求体里的**模型名**路由到对应订阅（providers.json 声明），自动注入该订阅凭证；同协议**原样直通**，跨协议走**双向翻译**。工作台部分（同一页的左栏第一组）：跨 agent 的**待办事项**（`/v1/todos`，人与 agent 共用）+ **时间段 AI 工作总结**（读 Claude Code / zcode / opencode / Cursor 四个 agent 的本地会话记录 → 两级总结成给上级的汇报）。**管理台与工作台是同一个页面（`web/index.html`）、八个视图**，左栏两级分组导航（#opencode 电视墙页内含全屏大屏监控面板，非独立视图）。
 
 - **零依赖 + 模块化**：无 package.json / node_modules，只用 Node ≥ 18 内置模块 + spawn 系统 `sqlite3`，`server.mjs` 入口 + `lib/` 若干 ESM 模块。没有构建、lint；测试是 `node test/smoke.mjs`（mock 上游端到端 + fixture 数据源，不依赖真实订阅与真实 agent 数据）。
 - **语言约定**：注释、文档、commit message 全部使用中文，与现有风格保持一致。
@@ -13,31 +13,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 node server.mjs              # 前台直接运行（调试用；源目录无 providers.json，会回落内置默认配置——仅 cannbot、无客户端鉴权）
-node test/smoke.mjs          # 端到端冒烟测试（起 mock 上游 + 网关实例，三百余项断言；固定端口 6290/6291）
+node test/smoke.mjs          # 端到端冒烟测试（起 mock 上游 + 网关实例，约 560 项断言；固定端口 6290/6291）
+node test/tv.mjs             # 电视监听端到端；node test/tv-unit.mjs 纯函数（详见 README §8 的测试表）
 node test/robustness.mjs     # 稳健性回归（多字节跨 chunk / 上游断流 / 原型污染 / 跨站 / 并行 tool_use）
 # 前台联调真实配置（换端口避开 launchd 实例；VK 缓存指到临时目录防活凭证落入源目录）：
 PGW_PROXY_PORT=8485 PGW_CONFIG_FILE="$HOME/.local/share/personal-gateway/providers.json" PGW_VK_CACHE=/tmp/vk-debug.json node server.mjs
 ./install.sh [端口]           # 安装并启动 launchd 常驻服务（幂等，缺省 8484）；PGW_SKIP_LAUNCHCTL=1 演练（跳过 launchctl 步骤）
+                             # 根目录这个是转发壳，正式脚本在 deploy/install.sh（两者等价）
 ./uninstall.sh [--revert-configs]   # 停服务；--revert-configs 连 zcode 配置一起回滚；PGW_SKIP_LAUNCHCTL=1 演练同上（旧名 CGP_SKIP_LAUNCHCTL 也认；launchctl 作用于用户域、与 HOME 无关，脚本测试必须带它）
 ./status.sh                  # 服务状态 + 各上游凭证体检 + 最近请求
-./cannbot-creds.sh           # cannbot 订阅凭证诊断（日常不用跑）
+./scripts/cannbot-creds.sh   # cannbot 订阅凭证诊断（日常不用跑）
 curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
 ```
 
 Windows（PowerShell）：
 
 ```powershell
-.\install.ps1 [端口]          # 拷贝运行时副本到 %LOCALAPPDATA%\personal-gateway 并注册登录自启任务 PersonalGateway
+.\install.ps1 [端口]          # 拷贝运行时副本到 %LOCALAPPDATA%\personal-gateway 并注册登录自启任务 PersonalGateway（根目录为转发壳）
 .\uninstall.ps1 [-RevertConfigs]   # 停服务 + 移除登录任务；-RevertConfigs 回滚 zcode 配置
 .\status.ps1                  # 服务状态 + 各上游凭证体检 + 最近请求
-.\打开管理界面.bat            # 探活 + 拉起（优先任务计划程序）+ 打开管理台
+.\deploy\打开管理界面.bat     # 探活 + 拉起（优先任务计划程序）+ 打开管理台
 ```
 
 ## ⚠️ 双目录设计（改代码必读）
 
 本目录是**项目源**（仓库名 `personal_workshop`，项目定位 2026-11 已更名 personal_gateway）；macOS 的 launchd 实际运行的是 `install.sh` 拷贝到 `~/.local/share/personal-gateway/` 的**运行时副本**（macOS TCC 限制 launchd 读不了桌面）；Windows 的任务计划程序运行 `install.ps1` 拷贝到 `%LOCALAPPDATA%\personal-gateway\` 的副本。2026-10 及更早版本装在 `~/.local/share/cannbot-gateway-proxy/`，重跑 `./install.sh` 会把旧目录**整体迁移**到新目录（providers.json/待办/统计全保留）并清掉旧 label 的 plist。
 
-**改动 `server.mjs`、`lib/`、`index.html`、`theme.css` 后必须重跑对应安装脚本（macOS `./install.sh` / Windows `.\install.ps1`）才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、`logs/proxy.err.log`、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。环境变量前缀 2026-11 起 **CANNBOT_ → PGW_**（统一走 lib/env.mjs 读取：PGW_ 优先、同名旧 CANNBOT_ 兜底，旧 plist/外部脚本不至于一夜失效）。运行时文件位置可用 `PGW_CONFIG_FILE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` 覆盖；报告数据源根路径可用 `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
+**源目录布局（2026-11 重排）**：仓库根只留入口与代码——`server.mjs`、`lib/`、`test/`、`skills/`、`docs/`、`README.md`、`CLAUDE.md`；静态资源在 `web/`（`index.html`、`theme.css`）；平台脚本与模板在 `deploy/`（install/uninstall/status 的 .sh 与 .ps1、`plist.template`、`providers.template.json`、两个 `打开管理界面.*`）；诊断工具在 `scripts/`（`cannbot-creds.sh`）。**包装脚本的路径语义**：`deploy/*` 里的脚本用 `$(dirname "$0")/..`（PowerShell 用 `Split-Path -Parent $PSScriptRoot`）定位仓库根；`server.mjs` 读静态资源时**先查同目录、再查 `web/`**——运行时副本把 `web/` 里的两个文件摊平拷到根，源目录则读 `web/`，两种布局都不需要额外配置。仓库根的 `install.sh` / `install.ps1`（以及 uninstall/status）是几行的**转发壳**，让 `./install.sh` 这类历史命令继续可用。
+
+**改动 `server.mjs`、`lib/`、`web/index.html`、`web/theme.css` 后必须重跑对应安装脚本（macOS `./install.sh` / Windows `.\install.ps1`）才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、`logs/proxy.err.log`、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。环境变量前缀 2026-11 起 **CANNBOT_ → PGW_**（统一走 lib/env.mjs 读取：PGW_ 优先、同名旧 CANNBOT_ 兜底，旧 plist/外部脚本不至于一夜失效）。运行时文件位置可用 `PGW_CONFIG_FILE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` 覆盖；报告数据源根路径可用 `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
 
 ## 架构（模块图）
 
@@ -216,7 +220,7 @@ lib/report/generate.mjs 报告生成状态机：单任务串行（409）、colle
 lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里。
                       成稿**正文按待办分节**（每条 80-150 字，不再是每节 3 条长 bullet）、
                       未归属工作进末尾「## 其他」一行一条，整体 ≤700 字
-index.html            单页外壳：左栏两级分组导航（工作台 / 管理台）+ 八个视图（#opencode 含全屏大屏监控面板）
+web/index.html        单页外壳：左栏两级分组导航（工作台 / 管理台）+ 八个视图（#opencode 含全屏大屏监控面板）
                       （首屏 / 待办 / 汇报 / 总览 / 统计 / 诊断 / 配置）全部逻辑内联在一段脚本里。
                       首屏（#home）：左待办右订阅卡，数据走 GET /admin/home；额度 60 秒缓存，
                       切走时停轮询。
@@ -225,8 +229,12 @@ index.html            单页外壳：左栏两级分组导航（工作台 / 管�
                       和「有子项才渲染」，而子项/详情只能在展开区里添加 → 干净待办永远进不去，
                       功能只有 agent 走 REST 才用得着（同一个死角犯过两次）。展开看子项清单
                       （勾选即 PATCH 单条）、详情（agent 长文默认折叠）
-theme.css             共享主题：令牌 / 骨架 / 左栏布局契约 / 通用组件（/theme.css 提供，
+web/theme.css         共享主题：令牌 / 骨架 / 左栏布局契约 / 通用组件（/theme.css 提供，
                       /workbench.css 为旧缓存的兼容别名，同一份内容）
+
+deploy/               平台脚本与模板：install/uninstall/status（.sh + .ps1）、plist.template、
+                      providers.template.json、打开管理界面.command / .bat
+scripts/cannbot-creds.sh  cannbot 凭证诊断（--sync-zcode 改写 zcode 配置）
 ```
 
 ### 请求路由（server.mjs 主入口）
@@ -288,7 +296,7 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
    静态 token 每请求解析。上游 401 → provider 策略重试一次（cannwork 强制重取 VK；static 不重试）；
    **403 不重试**（账号权限问题，直接透传）。
 3. **防自我代理环路**：providers 的 baseUrl 必须直连上游官方域名，绝不能指向网关自身端口。
-4. **providers.json 含全部订阅凭证**：0600（Windows 收 ACL 到当前用户）、.gitignore 排除、绝不入库。模板是 providers.template.json
+4. **providers.json 含全部订阅凭证**：0600（Windows 收 ACL 到当前用户）、.gitignore 排除、绝不入库。模板是 `deploy/providers.template.json`
    （`__CLIENT_TOKEN__` 占位由 install.sh / install.ps1 首次安装时以随机 token 生成，**升级不覆盖已有配置**）。
 
 ### 流量统计与性能采样
@@ -303,7 +311,7 @@ User-Agent 取的**产品名/版本**（剥掉 OS 注释与括号，超长截断
 - 流式请求自动补 `stream_options.include_usage`（openai 上游）。性能口径对齐 vLLM benchmark：TTFT/TPOT/ITL/E2E；上游 completion_tokens 按字符权重经最大余数法摊到各块（`apportionTokens`）。
 - 统计按 天/provider/模型/小时 分桶，延迟直方图 + 有限原始样本，30s 防抖落盘 stats.json 保留 30 天。`/admin/stats` 的 models 以 `provider:model` 展平，buckets 含 `cost`（lib/pricing.mjs 按单价折算的等效费用），响应另带 `prices[]`（期间出现过的模型生效单价，供管理台单价表）。
 
-### 页面外壳（`index.html` + `theme.css`）
+### 页面外壳（`web/index.html` + `web/theme.css`）
 
 单页应用，由 `/`（及 `/admin`、`/workbench`）提供。**左栏两级分组导航**，全部是真链接
 `<a href="#v">`（可中键新开、可复制、Tab 可达），由 `hashchange` 驱动切视图：

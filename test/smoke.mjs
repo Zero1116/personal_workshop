@@ -1189,24 +1189,25 @@ try {
   {
     // macOS 自带 bash 3.2 会把紧跟变量的全角（等标点的多字节序列并入变量名，
     // set -u 下报 unbound variable——uninstall.sh 曾因此在 rm -rf 前崩溃
+    // 2026-11 目录重排：正式脚本在 deploy/ 与 scripts/，根目录只剩转发壳
     const bad = [];
-    for (const sh of ['install.sh', 'uninstall.sh', 'status.sh', 'cannbot-creds.sh']) {
+    for (const sh of ['deploy/install.sh', 'deploy/uninstall.sh', 'deploy/status.sh', 'scripts/cannbot-creds.sh']) {
       const src = fs.readFileSync(path.join(ROOT, sh), 'utf8');
       for (const m of src.matchAll(/\$[A-Za-z_][A-Za-z0-9_]*[（）。：，、]/g)) bad.push(`${sh}: ${m[0]}`);
     }
     check('四个 shell 脚本无 $VAR 后紧跟全角标点', bad.length === 0, bad.join(' | '));
-    const un = fs.readFileSync(path.join(ROOT, 'uninstall.sh'), 'utf8');
+    const un = fs.readFileSync(path.join(ROOT, 'deploy/uninstall.sh'), 'utf8');
     check('uninstall.sh 卸载前抢救 .bad 现场备份', un.includes('*.bad') && un.includes('*.bad.*'),
       un.split('\n').filter((l) => l.includes('.bad')).join(' | ').slice(0, 120));
     // r6 事故防护：launchctl 作用于用户域（与 HOME 无关），两脚本必须有演练守卫
-    const ins = fs.readFileSync(path.join(ROOT, 'install.sh'), 'utf8');
+    const ins = fs.readFileSync(path.join(ROOT, 'deploy/install.sh'), 'utf8');
     check('install.sh 含 CGP_SKIP_LAUNCHCTL 演练守卫', (ins.match(/CGP_SKIP_LAUNCHCTL/g) ?? []).length >= 2,
       'bootout 与 bootstrap 两处都需守卫');
     check('uninstall.sh 含 CGP_SKIP_LAUNCHCTL 演练守卫', (un.match(/CGP_SKIP_LAUNCHCTL/g) ?? []).length >= 2,
       'bootout 与文案都需守卫');
     // r8 对比度：tgroup-label 用 --dim（暗 5.5 / 亮 4.69，WCAG AA）；亮色 --dim 加深到 #736d5e
-    const wbh = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-    const wbc = fs.readFileSync(path.join(ROOT, 'theme.css'), 'utf8');
+    const wbh = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
+    const wbc = fs.readFileSync(path.join(ROOT, 'web/theme.css'), 'utf8');
     check('tgroup-label 颜色为 --dim（不用 2.67:1 的 --faint）',
       /tgroup-label[\s\S]{0,200}color:\s*var\(--dim\)/.test(wbh),
       '分组标签需达 WCAG AA');
@@ -2579,12 +2580,12 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
 
   console.log('— 热键/一键切换功能移除（源、脚本与页面无残留） —');
   {
-    check('源目录已无热键守护源与热键 LaunchAgent 模板', !fs.existsSync(path.join(ROOT, 'hotkeys')) && !fs.existsSync(path.join(ROOT, 'hotkeys.plist.template')));
-    const inst = fs.readFileSync(path.join(ROOT, 'install.sh'), 'utf8');
+    check('源目录已无热键守护源与热键 LaunchAgent 模板', !fs.existsSync(path.join(ROOT, 'hotkeys')) && !fs.existsSync(path.join(ROOT, 'deploy/hotkeys.plist.template')));
+    const inst = fs.readFileSync(path.join(ROOT, 'deploy/install.sh'), 'utf8');
     check('install.sh：不再编译/安装热键守护（无 swiftc / hotkeys 模板 / 守护 bootstrap）', !inst.includes('swiftc') && !inst.includes('hotkeys.plist.template') && !inst.includes('monitor-hotkeys.swift'));
-    const uninst = fs.readFileSync(path.join(ROOT, 'uninstall.sh'), 'utf8');
+    const uninst = fs.readFileSync(path.join(ROOT, 'deploy/uninstall.sh'), 'utf8');
     check('install.sh / uninstall.sh：保留旧版热键 LaunchAgent 的遗留清理路径（曾装过的机器能清掉）', inst.includes('cannbot-monitor-hotkeys') && inst.includes('HOTKEY_PLIST') && uninst.includes('cannbot-monitor-hotkeys') && uninst.includes('HOTKEY_PLIST'));
-    const admText = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const admText = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
     check('页面：一键切换按钮 / 热键改绑 UI / toggle 调用全部移除', !admText.includes('monToggle') && !admText.includes('monHk') && !admText.includes('/admin/monitors/hotkeys') && !admText.includes("mode: 'toggle'") && !admText.includes('{"mode":"toggle"}'));
     check('页面：手动切换面保留（左栏每屏一键轮换 + 总览每屏轮换 + 输入源/屏改名）', admText.includes('data-mdisp') && admText.includes('data-mcycle') && admText.includes('monInEdit') && admText.includes('data-mnamesave'));
 
@@ -2614,6 +2615,35 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('文档不把 /workbench 说成独立页面',
       !/工作台页（workbench|独立页面/.test(readmeMd), 'README 仍把工作台当独立页');
     check('文档记录按视图轮询', claudeMd.includes('按视图') || claudeMd.includes('可见时才拉'));
+
+    // -- 源目录布局（2026-11 重排）：静态资源在 web/、平台脚本在 deploy/、根目录只留转发壳 --
+    const rootEntries = fs.readdirSync(ROOT).filter((n) => !n.startsWith('.'));
+    check('静态资源在 web/（根目录不再有 index.html / theme.css）',
+      fs.existsSync(path.join(ROOT, 'web/index.html')) && fs.existsSync(path.join(ROOT, 'web/theme.css'))
+      && !fs.existsSync(path.join(ROOT, 'index.html')) && !fs.existsSync(path.join(ROOT, 'theme.css')));
+    check('平台脚本与模板在 deploy/',
+      ['install.sh', 'install.ps1', 'uninstall.sh', 'uninstall.ps1', 'status.sh', 'status.ps1',
+        'plist.template', 'providers.template.json', '打开管理界面.command', '打开管理界面.bat']
+        .every((f) => fs.existsSync(path.join(ROOT, 'deploy', f))));
+    check('诊断脚本在 scripts/（cannbot-creds.sh）', fs.existsSync(path.join(ROOT, 'scripts/cannbot-creds.sh')));
+    check('根目录转发壳仍可用（install/uninstall/status 的 .sh 与 .ps1）',
+      ['install.sh', 'uninstall.sh', 'status.sh', 'install.ps1', 'uninstall.ps1', 'status.ps1']
+        .every((f) => fs.existsSync(path.join(ROOT, f))));
+    check('根目录不再散落模板与双击入口',
+      !rootEntries.includes('plist.template') && !rootEntries.includes('providers.template.json')
+      && !rootEntries.includes('打开管理界面.command') && !rootEntries.includes('打开管理界面.bat')
+      && !rootEntries.includes('cannbot-creds.sh'));
+    const shellShim = fs.readFileSync(path.join(ROOT, 'install.sh'), 'utf8');
+    check('install.sh 转发壳 exec 到 deploy/install.sh 并透传参数', /exec\s+"\$DIR\/deploy\/install\.sh"\s+"\$@"/.test(shellShim));
+    const psShim = fs.readFileSync(path.join(ROOT, 'install.ps1'), 'utf8');
+    check('install.ps1 转发壳调用 deploy/install.ps1', /deploy\\\\install\.ps1/.test(psShim) || /deploy\\install\.ps1/.test(psShim));
+    check('server.mjs 静态资源先查根再查 web/（兼容运行时摊平与源目录）',
+      /function staticAsset/.test(fs.readFileSync(path.join(ROOT, 'server.mjs'), 'utf8'))
+      && /'web'/.test(fs.readFileSync(path.join(ROOT, 'server.mjs'), 'utf8')));
+    check('安装脚本从 web/ 取静态资源、从 deploy/ 取模板',
+      fs.readFileSync(path.join(ROOT, 'deploy/install.sh'), 'utf8').includes('web/index.html')
+      && fs.readFileSync(path.join(ROOT, 'deploy/install.sh'), 'utf8').includes('deploy/providers.template.json')
+      && fs.readFileSync(path.join(ROOT, 'deploy/install.ps1'), 'utf8').includes("'web'"));
 
     // -- 合并后的事件委托隔离（独立审查发现：供应商「删除」会连带触发待办删除）--
     // 这里用 admText（本作用域已读的 index.html），与上面 HTTP 小节里的 idxHtml 同一个文件

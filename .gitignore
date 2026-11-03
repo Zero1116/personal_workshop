@@ -2,7 +2,7 @@
 creds.json
 vk-cache.json
 
-# 运行时产物
+# 运行时产物（源目录前台调试时落在仓库根——各模块的 SCRIPT_DIR 是 server.mjs 所在目录）
 proxy.log
 proxy.log.1
 stats.json

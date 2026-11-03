@@ -78,8 +78,20 @@ function isLocalHost(req) {
   return true;
 }
 
-const INDEX_HTML = path.join(SCRIPT_DIR, 'index.html');
-const THEME_CSS = path.join(SCRIPT_DIR, 'theme.css');
+// 静态资源位置兼容两种布局：
+//   ① 运行时副本：安装脚本把 web/index.html、web/theme.css 摊平拷到 server.mjs 同目录
+//      （与历史安装目录一致，升级后无需额外目录）；
+//   ② 源目录前台调试：仓库里它们位于 web/ 下。
+// 先看根、再看 web/——运行时目录没有 web/，源目录没有根文件，互不干扰。
+function staticAsset(name) {
+  const flat = path.join(SCRIPT_DIR, name);
+  if (fs.existsSync(flat)) return flat;
+  const nested = path.join(SCRIPT_DIR, 'web', name);
+  if (fs.existsSync(nested)) return nested;
+  return flat; // 都不存在时返回 root 路径：报错文案里显示的位置与历史一致
+}
+const INDEX_HTML = staticAsset('index.html');
+const THEME_CSS = staticAsset('theme.css');
 // 2026-11 项目更名 personal_gateway：label 随之改新；旧 label 保留作重启/停止的兜底——
 // 未重跑 install.sh 的既有实例仍挂在旧 label 下，restart/stop 打新 label 会失败
 const LAUNCH_LABEL = 'cn.hicann.personal-gateway';
