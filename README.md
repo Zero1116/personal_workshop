@@ -29,7 +29,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1   # 执行策�
 
 不安装、前台调试：`node server.mjs`（产物落在当前目录）。⚠️ 联调真实配置时把 `PGW_VK_CACHE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` 指到临时目录——否则活的 VK 凭证会写进源目录（曾发生过）。
 
-**双击入口**：`deploy\打开管理界面.bat` 先探活、未启动则拉起，再打开 `http://127.0.0.1:<端口>/`。它优先 `schtasks /Run` 触发 `PersonalGateway`；没有该任务时在项目目录以最小化窗口跑 `node server.mjs`（源码副本，关窗即停）。
+**双击入口**：`deploy\打开管理界面.bat` 先探活、未启动则拉起，再打开 `http://127.0.0.1:<端口>/`。它优先触发登录任务 `PersonalGateway`；没有该任务时在项目目录后台跑 `node server.mjs`（关窗即停）。
+
+> 这个 `.bat` **只有纯 ASCII**，逻辑全在同目录的 `打开管理界面.ps1` 里。原因是 cmd.exe 按字节偏移解析批处理：文件里一旦同时出现多字节中文和 `chcp 65001`，偏移就会错位、`@echo off` 失效、中文行的尾巴被当成命令执行（曾报 `'unchd' is not recognized`，窗口一闪而过）。`.gitattributes` 与 smoke 都有断言守住这条。
 
 **双目录设计（改代码必读）**：服务跑的是安装脚本拷到 `%LOCALAPPDATA%\personal-gateway\` 的副本，拷贝范围只有 `server.mjs` + `lib/` + `web/index.html` + `web/theme.css`（运行时摊平到根）。改这四个后**必须重跑 `.\install.ps1`**；改 `providers.json` 不用——网关按 mtime + size 热加载。`test/`、`skills/`、`docs/`、`deploy/`、`scripts/` 不参与运行。
 
@@ -358,7 +360,8 @@ Get-Content "$env:LOCALAPPDATA\personal-gateway\logs\proxy.err.log" -Tail 50
 ├─ server.mjs          入口：HTTP 服务、路由分发、healthz/admin 端点
 ├─ lib/                配置、模型路由、上游请求、凭证链、双向翻译、统计、待办、汇报管线、电视墙、同步、显示器
 ├─ web/                静态资源：index.html（八个视图、左栏两级导航）、theme.css
-├─ deploy/             install.ps1 / uninstall.ps1 / status.ps1、providers.template.json、打开管理界面.bat
+├─ deploy/             install.ps1 / uninstall.ps1 / status.ps1、providers.template.json、
+│                      打开管理界面.bat（纯 ASCII 转发壳）+ 打开管理界面.ps1（实际逻辑）
 ├─ scripts/            cannbot-creds.sh（凭证诊断；--sync-zcode 改写 zcode 配置）
 ├─ test/               7 个测试 + 2 个 mock（mock-upstream.mjs、mock-m1ddc.mjs）
 ├─ skills/             workbench-todos/（给 agent 的待办 skill，随代码分发）

@@ -5,8 +5,12 @@
 # 重排时 .bat 曾被存成 LF——cmd.exe 解析器算错字节偏移，含中文的行被当命令执行，
 # 双击窗口一闪而过；同一次改动还把 cannbot-creds.sh 存成了 CRLF。这里按扩展名钉死。
 
-# ── 批处理：字节必须原样进出 ──────────────────────────────────────────────
-# cmd.exe 要求 CRLF；含中文的 .bat 还需要 UTF-8 BOM，否则 chcp 之前的行会乱码。
+# ── 批处理：字节必须原样进出，且内容必须是纯 ASCII ────────────────────────
+# cmd.exe 按字节偏移解析批处理。文件里同时出现 UTF-8 BOM + chcp 65001 + 多字节
+# 中文时偏移会错位：@echo off 失效、中文行的尾巴被当成命令执行
+# （曾报「'unchd' is not recognized」）。BOM 救不了，行内分词也救不了。
+# 所以 .bat 一律只做「转发给 .ps1」一件事，中文全部放在 PowerShell 里；
+# smoke 有断言强制 .bat 无非 ASCII 字节。
 # -text 关掉一切换行符转换（含 core.autocrlf），防止编辑器/工具静默改成 LF。
 *.bat  -text
 *.cmd  -text

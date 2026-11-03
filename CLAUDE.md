@@ -27,6 +27,7 @@ $env:PGW_PROXY_PORT=8485; $env:PGW_CONFIG_FILE="$env:LOCALAPPDATA\personal-gatew
 .\uninstall.ps1 [-RevertConfigs]   # 停服务 + 移除登录任务；-RevertConfigs 回滚 zcode 配置
 .\status.ps1                  # 服务状态 + 各上游凭证体检 + 最近请求
 .\deploy\打开管理界面.bat     # 探活 + 拉起（优先任务计划程序）+ 打开管理台
+                             # .bat 纯 ASCII 只做转发，逻辑在 打开管理界面.ps1
 .\scripts\cannbot-creds.sh    # cannbot 订阅凭证诊断（bash 脚本；日常不用跑，需 Git Bash/WSL）
 curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
 ```
@@ -38,6 +39,18 @@ curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
 **源目录布局（2026-11 重排）**：仓库根只留入口与代码——`server.mjs`、`lib/`、`test/`、`skills/`、`docs/`、`README.md`、`CLAUDE.md`；静态资源在 `web/`（`index.html`、`theme.css`）；Windows 脚本与模板在 `deploy/`（`install.ps1`、`uninstall.ps1`、`status.ps1`、`providers.template.json`、`打开管理界面.bat`）；诊断工具在 `scripts/`（`cannbot-creds.sh`）。**路径语义**：`deploy/*.ps1` 用 `Split-Path -Parent $PSScriptRoot` 定位仓库根；`server.mjs` 读静态资源时**先查同目录、再查 `web/`**——运行时副本把 `web/` 里的两个文件摊平拷到根，源目录则读 `web/`，两种布局都不需要额外配置。仓库根的三个 `.ps1` 是几行的**转发壳**，让 `.\install.ps1` 这类命令与文件位置解耦。
 
 **改动 `server.mjs`、`lib/`、`web/index.html`、`web/theme.css` 后必须重跑 `.\install.ps1` 才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、`logs/proxy.err.log`、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。环境变量前缀 2026-11 起 **CANNBOT_ → PGW_**（统一走 lib/env.mjs 读取：PGW_ 优先、同名旧 CANNBOT_ 兜底，外部脚本不至于一夜失效）。运行时文件位置可用 `PGW_CONFIG_FILE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` 覆盖；报告数据源根路径可用 `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
+
+## ⚠️ 文件编码契约（改脚本前必读，已踩过两次）
+
+三种运行时对**字节**各有硬要求，`core.autocrlf=true` 又会擅自改换行符，所以由根目录 `.gitattributes` 钉死、smoke 逐字节断言：
+
+| 文件 | 必须 | 违反后的症状 |
+|---|---|---|
+| `*.bat` | **纯 ASCII** + CRLF + **无 BOM** | cmd.exe 按字节偏移解析，混入中文后偏移错位：`@echo off` 失效、中文行的尾巴被当命令执行（`'unchd' is not recognized`），双击窗口一闪而过。加 BOM、行内分词都救不了 |
+| `*.ps1` | UTF-8 **带 BOM** + CRLF | Windows PowerShell 5.1 无 BOM 时按系统 ANSI(GBK) 解码中文 → 乱码 → 引号/括号失配 → `Unexpected token '}'` |
+| `*.sh` | **LF** + 无 BOM | bash 报 `$'\r': command not found`，脚本完全跑不起来 |
+
+因此 **`.bat` 里不写业务逻辑与中文**：`打开管理界面.bat` 只做 `-NoProfile -ExecutionPolicy Bypass -File 打开管理界面.ps1` 的转发，所有判断和中文提示都在 `.ps1` 里。
 
 ## 架构（模块图）
 
@@ -229,7 +242,7 @@ web/theme.css         共享主题：令牌 / 骨架 / 左栏布局契约 / 通�
                       /workbench.css 为旧缓存的兼容别名，同一份内容）
 
 deploy/               Windows 脚本与模板：install.ps1 / uninstall.ps1 / status.ps1、
-                      providers.template.json、打开管理界面.bat
+                      providers.template.json、打开管理界面.bat（纯 ASCII 转发壳）+ 打开管理界面.ps1（逻辑）
 scripts/cannbot-creds.sh  cannbot 凭证诊断（--sync-zcode 改写 zcode 配置）
 ```
 

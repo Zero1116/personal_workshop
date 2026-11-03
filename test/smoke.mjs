@@ -2626,12 +2626,14 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       fs.readFileSync(path.join(ROOT, 'deploy/install.ps1'), 'utf8').includes("'web'")
       && fs.readFileSync(path.join(ROOT, 'deploy/install.ps1'), 'utf8').includes("'providers.template.json'"));
 
-    // -- 换行符/BOM 契约（2026-11 踩过的两个坑，都由 git 自动转换引起）----------
-    // ① .bat 存成 LF → cmd.exe 解析器算错字节偏移，含中文的行被当命令执行，
-    //    双击后一闪而过（报 '动，正在最小化窗口启动…' is not recognized）。需 CRLF + BOM。
-    // ② .sh 存成 CRLF → bash 报 $'\r': command not found。需 LF 且无 BOM。
-    // ③ .ps1 无 BOM → Windows PowerShell 5.1 按 ANSI(GBK) 解码中文，变乱码后
-    //    引号/括号失配，报 "Unexpected token '}'"。需 BOM（CRLF 另由 .gitattributes 约束）。
+    // -- 编码契约（2026-11 连踩两次，都是 cmd/bash/PowerShell 的字节层规则）------
+    // ① .bat 里混入多字节中文 → cmd.exe 按字节偏移解析错位：@echo off 失效、
+    //    中文行的尾巴被当命令执行（报 'unchd' is not recognized），双击一闪而过。
+    //    加 BOM / 行内分词都救不了 —— 唯一可靠解法是 .bat 只含 ASCII、做纯转发。
+    // ② .bat 存成 LF → 同样错位。需 CRLF。
+    // ③ .sh 存成 CRLF → bash 报 carriage-return 未找到命令。需 LF 且无 BOM。
+    // ④ .ps1 无 BOM → Windows PowerShell 5.1 按 ANSI(GBK) 解码中文，变乱码后
+    //    引号/括号失配，报 "Unexpected token '}'"。需 BOM。
     const eolInfo = (rel) => {
       const buf = fs.readFileSync(path.join(ROOT, rel));
       const txt = buf.toString('utf8');
@@ -2639,15 +2641,24 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
         crlf: (txt.match(/\r\n/g) || []).length,
         loneLf: (txt.match(/(?<!\r)\n/g) || []).length,
         bom: buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF,
+        nonAscii: buf.reduce((n, b) => n + (b > 127 ? 1 : 0), 0),
       };
     };
     const bat = eolInfo('deploy/打开管理界面.bat');
-    check('.bat 必须是 CRLF + UTF-8 BOM（否则 cmd 把中文行当命令，窗口一闪而过）',
-      bat.crlf > 0 && bat.loneLf === 0 && bat.bom, JSON.stringify(bat));
+    check('.bat 必须纯 ASCII（混入中文会让 cmd 解析错位，双击一闪而过）',
+      bat.nonAscii === 0, `非 ASCII 字节 ${bat.nonAscii} 个`);
+    check('.bat 必须是 CRLF 且无 BOM（LF 同样会让 cmd 错位）',
+      bat.crlf > 0 && bat.loneLf === 0 && !bat.bom, JSON.stringify({ crlf: bat.crlf, loneLf: bat.loneLf, bom: bat.bom }));
+    check('.bat 只做转发：调用同目录 .ps1，自身不含业务判断',
+      (() => {
+        const src = fs.readFileSync(path.join(ROOT, 'deploy/打开管理界面.bat'), 'utf8');
+        return /-File "%~dp0[^"]+\.ps1"/.test(src) && /-ExecutionPolicy Bypass/.test(src);
+      })());
     const sh = eolInfo('scripts/cannbot-creds.sh');
     check('.sh 必须是 LF 且无 BOM（CRLF 会让 bash 报 carriage-return 未找到命令）',
-      sh.loneLf > 0 && sh.crlf === 0 && !sh.bom, JSON.stringify(sh));
-    const psFiles = ['deploy/install.ps1', 'deploy/uninstall.ps1', 'deploy/status.ps1', 'install.ps1', 'uninstall.ps1', 'status.ps1'];
+      sh.loneLf > 0 && sh.crlf === 0 && !sh.bom, JSON.stringify({ crlf: sh.crlf, loneLf: sh.loneLf, bom: sh.bom }));
+    const psFiles = ['deploy/install.ps1', 'deploy/uninstall.ps1', 'deploy/status.ps1',
+      'deploy/打开管理界面.ps1', 'install.ps1', 'uninstall.ps1', 'status.ps1'];
     const badPs = psFiles.filter((f) => !eolInfo(f).bom);
     check('.ps1 必须带 UTF-8 BOM（5.1 无 BOM 时按 GBK 解码中文，语法错误）',
       badPs.length === 0, `缺 BOM: ${badPs.join(', ')}`);
