@@ -1,0 +1,30 @@
+# 换行符策略（Windows 仓库）
+#
+# 背景：本机 core.autocrlf=true，默认会把所有文本在检出时转成 CRLF。对 .bat/.cmd
+# 这是必需的，对 .sh 却是致命的（bash 报 $'\r': command not found）。2026-11 目录
+# 重排时 .bat 曾被存成 LF——cmd.exe 解析器算错字节偏移，含中文的行被当命令执行，
+# 双击窗口一闪而过；同一次改动还把 cannbot-creds.sh 存成了 CRLF。这里按扩展名钉死。
+
+# ── 批处理：字节必须原样进出 ──────────────────────────────────────────────
+# cmd.exe 要求 CRLF；含中文的 .bat 还需要 UTF-8 BOM，否则 chcp 之前的行会乱码。
+# -text 关掉一切换行符转换（含 core.autocrlf），防止编辑器/工具静默改成 LF。
+*.bat  -text
+*.cmd  -text
+
+# ── shell：必须 LF ───────────────────────────────────────────────────────
+*.sh   text eol=lf
+
+# ── PowerShell：CRLF 且必须带 UTF-8 BOM ─────────────────────────────────
+# Windows PowerShell 5.1 读无 BOM 的 UTF-8 脚本时按系统 ANSI(GBK) 解码：中文变
+# 乱码 → 引号/括号失配 → "Unexpected token '}'"。BOM 是 5.1 识别 UTF-8 的唯一信号。
+# 用 -text 保字节原样（BOM 不能被换行转换逻辑碰），CRLF 另由编辑器约定维持。
+*.ps1  -text
+
+# ── 其余文本：统一 LF 入库，检出时由 autocrlf 决定 ───────────────────────
+*.md   text
+*.mjs  text
+*.json text
+*.css  text
+*.html text
+.gitattributes text eol=lf
+.gitignore     text eol=lf

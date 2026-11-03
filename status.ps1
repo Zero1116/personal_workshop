@@ -1,4 +1,4 @@
-# status.ps1 — 兼容入口（正式脚本在 deploy/status.ps1）
+﻿# status.ps1 — 兼容入口（正式脚本在 deploy/status.ps1）
 
 [CmdletBinding()]
 param(

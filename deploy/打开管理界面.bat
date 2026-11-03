@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 rem 打开管理界面.bat — 双击即可：确保网关已启动，并在浏览器打开网页管理台。
 rem Windows 版，与 打开管理界面.command 对应：launchd 部署仅 macOS；Windows 用

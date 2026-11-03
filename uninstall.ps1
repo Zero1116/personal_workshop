@@ -1,4 +1,4 @@
-# uninstall.ps1 — 兼容入口（正式脚本在 deploy/uninstall.ps1）
+﻿# uninstall.ps1 — 兼容入口（正式脚本在 deploy/uninstall.ps1）
 
 [CmdletBinding()]
 param(

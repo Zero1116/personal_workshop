@@ -2626,6 +2626,35 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       fs.readFileSync(path.join(ROOT, 'deploy/install.ps1'), 'utf8').includes("'web'")
       && fs.readFileSync(path.join(ROOT, 'deploy/install.ps1'), 'utf8').includes("'providers.template.json'"));
 
+    // -- 换行符/BOM 契约（2026-11 踩过的两个坑，都由 git 自动转换引起）----------
+    // ① .bat 存成 LF → cmd.exe 解析器算错字节偏移，含中文的行被当命令执行，
+    //    双击后一闪而过（报 '动，正在最小化窗口启动…' is not recognized）。需 CRLF + BOM。
+    // ② .sh 存成 CRLF → bash 报 $'\r': command not found。需 LF 且无 BOM。
+    // ③ .ps1 无 BOM → Windows PowerShell 5.1 按 ANSI(GBK) 解码中文，变乱码后
+    //    引号/括号失配，报 "Unexpected token '}'"。需 BOM（CRLF 另由 .gitattributes 约束）。
+    const eolInfo = (rel) => {
+      const buf = fs.readFileSync(path.join(ROOT, rel));
+      const txt = buf.toString('utf8');
+      return {
+        crlf: (txt.match(/\r\n/g) || []).length,
+        loneLf: (txt.match(/(?<!\r)\n/g) || []).length,
+        bom: buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF,
+      };
+    };
+    const bat = eolInfo('deploy/打开管理界面.bat');
+    check('.bat 必须是 CRLF + UTF-8 BOM（否则 cmd 把中文行当命令，窗口一闪而过）',
+      bat.crlf > 0 && bat.loneLf === 0 && bat.bom, JSON.stringify(bat));
+    const sh = eolInfo('scripts/cannbot-creds.sh');
+    check('.sh 必须是 LF 且无 BOM（CRLF 会让 bash 报 carriage-return 未找到命令）',
+      sh.loneLf > 0 && sh.crlf === 0 && !sh.bom, JSON.stringify(sh));
+    const psFiles = ['deploy/install.ps1', 'deploy/uninstall.ps1', 'deploy/status.ps1', 'install.ps1', 'uninstall.ps1', 'status.ps1'];
+    const badPs = psFiles.filter((f) => !eolInfo(f).bom);
+    check('.ps1 必须带 UTF-8 BOM（5.1 无 BOM 时按 GBK 解码中文，语法错误）',
+      badPs.length === 0, `缺 BOM: ${badPs.join(', ')}`);
+    const ga = fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8');
+    check('.gitattributes 钉死换行符策略（.bat -text、.sh lf、.ps1 -text）',
+      /\*\.bat\s+-text/.test(ga) && /\*\.sh\s+text\s+eol=lf/.test(ga) && /\*\.ps1\s+-text/.test(ga));
+
     // -- 仅保留 Windows：macOS 部署链路必须已删除，且不残留死引用 --
     check('macOS 部署脚本已移除（deploy/*.sh、plist.template、打开管理界面.command）',
       !fs.existsSync(path.join(ROOT, 'deploy/install.sh'))
