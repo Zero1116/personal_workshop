@@ -19,9 +19,8 @@
 
 import http from 'node:http';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { log, tailLog } from './lib/log.mjs';
 import { getConfig, tryGetConfig, getProvider, bindInboundEndpoint } from './lib/config.mjs';
@@ -92,21 +91,9 @@ function staticAsset(name) {
 }
 const INDEX_HTML = staticAsset('index.html');
 const THEME_CSS = staticAsset('theme.css');
-// 2026-11 项目更名 personal_gateway：label 随之改新；旧 label 保留作重启/停止的兜底——
-// 未重跑 install.sh 的既有实例仍挂在旧 label 下，restart/stop 打新 label 会失败
-const LAUNCH_LABEL = 'cn.hicann.personal-gateway';
-const LEGACY_LAUNCH_LABEL = 'cn.hicann.cannbot-gateway-proxy';
-const LAUNCH_TARGET = `gui/${os.userInfo().uid}/${LAUNCH_LABEL}`;
-const LEGACY_LAUNCH_TARGET = `gui/${os.userInfo().uid}/${LEGACY_LAUNCH_LABEL}`;
 
-function launchctl(args) {
-  execFile('/bin/launchctl', args, { timeout: 10_000 }, (e) => {
-    if (e) log(`launchctl ${args.join(' ')} 失败: ${e.message}`);
-  });
-}
-
-// ---- 非 launchd 平台（Windows / Linux）的自管重启与停止 --------------------
-// Windows 上由任务计划程序以「登录时」触发，进程退出后不会被自动拉回，因此：
+// ---- 自管重启与停止（Windows）---------------------------------------------
+// 由任务计划程序以「登录时」触发，进程退出后不会被自动拉回，因此：
 //   restart = 关闭全部监听后 detached 拉起一个新的 node server.mjs，再退出自己；
 //   stop    = 直接退出（任务计划程序不会因进程退出而重启它）。
 // closeSecondary 先关电视/同步监听，避免新进程抢不到端口。
@@ -251,19 +238,9 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         message: stopping ? '服务停止中' : '服务重启中，几秒后自动恢复',
       });
-      const args = stopping
-        ? ['bootout', LAUNCH_TARGET]
-        : ['kickstart', '-k', LAUNCH_TARGET];
       return setTimeout(() => {
-        // Windows / Linux 没有 launchd：自己关监听、拉新进程 / 退出（见 restartSelf/stopSelf）
-        if (process.platform !== 'darwin') {
-          return stopping ? stopSelf() : restartSelf();
-        }
-        // 更名过渡：新 label 没装过（launchctl 报错）时补打旧 label——
-        // 未重跑 install.sh 的既有实例仍挂在旧 label 下，只打新 label 会静默无效
-        launchctl(args);
-        const legacyArgs = args.map((a) => (a === LAUNCH_TARGET ? LEGACY_LAUNCH_TARGET : a));
-        setTimeout(() => launchctl(legacyArgs), 1500).unref();
+        // 自己关监听、拉新进程 / 退出（见 restartSelf/stopSelf）
+        return stopping ? stopSelf() : restartSelf();
       }, 300).unref();
     }
 

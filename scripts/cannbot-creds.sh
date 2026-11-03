@@ -25,7 +25,7 @@ LIST_API="https://cannbot.hicann.cn/cannbot/api/models/list"
 VK_API="https://cannbot.hicann.cn/cannbot/api/ai-keys/vk/my"
 PERSONAL_API="https://cannbot.hicann.cn/cannbot/api/models/personal"
 GATEWAY_BASE="https://cannbot.hicann.cn/gateway/compatible-mode/v1"
-# 本地代理常驻地址（launchd: cn.hicann.personal-gateway），
+# 本地代理常驻地址（Windows: 登录自启任务 PersonalGateway），
 # 自行注入 JWT+VK；zcode 配置一律指向代理，不再烘真实凭证。
 # 端口以 install.sh 写的运行时 port 文件为准：装到非 8484 时硬编码会把 zcode 指空
 # （新目录优先，更名前的旧目录兜底）。

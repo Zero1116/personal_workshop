@@ -11,37 +11,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 常用命令
 
-```bash
+## 平台支持
+
+**仅 Windows。** 2026-11 移除了 macOS 部署链路（`deploy/*.sh`、`plist.template`、`打开管理界面.command`、根目录 shell 转发壳，以及 `server.mjs` 的 `launchctl` / `darwin` 分支）。服务端代码本身不依赖平台，但仓库只维护 Windows 的安装、卸载、状态脚本。
+
+```powershell
 node server.mjs              # 前台直接运行（调试用；源目录无 providers.json，会回落内置默认配置——仅 cannbot、无客户端鉴权）
 node test/smoke.mjs          # 端到端冒烟测试（起 mock 上游 + 网关实例，约 560 项断言；固定端口 6290/6291）
 node test/tv.mjs             # 电视监听端到端；node test/tv-unit.mjs 纯函数（详见 README §8 的测试表）
 node test/robustness.mjs     # 稳健性回归（多字节跨 chunk / 上游断流 / 原型污染 / 跨站 / 并行 tool_use）
-# 前台联调真实配置（换端口避开 launchd 实例；VK 缓存指到临时目录防活凭证落入源目录）：
-PGW_PROXY_PORT=8485 PGW_CONFIG_FILE="$HOME/.local/share/personal-gateway/providers.json" PGW_VK_CACHE=/tmp/vk-debug.json node server.mjs
-./install.sh [端口]           # 安装并启动 launchd 常驻服务（幂等，缺省 8484）；PGW_SKIP_LAUNCHCTL=1 演练（跳过 launchctl 步骤）
-                             # 根目录这个是转发壳，正式脚本在 deploy/install.sh（两者等价）
-./uninstall.sh [--revert-configs]   # 停服务；--revert-configs 连 zcode 配置一起回滚；PGW_SKIP_LAUNCHCTL=1 演练同上（旧名 CGP_SKIP_LAUNCHCTL 也认；launchctl 作用于用户域、与 HOME 无关，脚本测试必须带它）
-./status.sh                  # 服务状态 + 各上游凭证体检 + 最近请求
-./scripts/cannbot-creds.sh   # cannbot 订阅凭证诊断（日常不用跑）
-curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
-```
+# 前台联调真实配置（换端口避开常驻实例；VK 缓存指到临时目录防活凭证落入源目录）：
+$env:PGW_PROXY_PORT=8485; $env:PGW_CONFIG_FILE="$env:LOCALAPPDATA\personal-gateway\providers.json"; $env:PGW_VK_CACHE="$env:TEMP\vk-debug.json"; node server.mjs
 
-Windows（PowerShell）：
-
-```powershell
 .\install.ps1 [端口]          # 拷贝运行时副本到 %LOCALAPPDATA%\personal-gateway 并注册登录自启任务 PersonalGateway（根目录为转发壳）
 .\uninstall.ps1 [-RevertConfigs]   # 停服务 + 移除登录任务；-RevertConfigs 回滚 zcode 配置
 .\status.ps1                  # 服务状态 + 各上游凭证体检 + 最近请求
 .\deploy\打开管理界面.bat     # 探活 + 拉起（优先任务计划程序）+ 打开管理台
+.\scripts\cannbot-creds.sh    # cannbot 订阅凭证诊断（bash 脚本；日常不用跑，需 Git Bash/WSL）
+curl http://127.0.0.1:8484/healthz  # 健康检查（providers[] 数组）
 ```
 
 ## ⚠️ 双目录设计（改代码必读）
 
-本目录是**项目源**（仓库名 `personal_workshop`，项目定位 2026-11 已更名 personal_gateway）；macOS 的 launchd 实际运行的是 `install.sh` 拷贝到 `~/.local/share/personal-gateway/` 的**运行时副本**（macOS TCC 限制 launchd 读不了桌面）；Windows 的任务计划程序运行 `install.ps1` 拷贝到 `%LOCALAPPDATA%\personal-gateway\` 的副本。2026-10 及更早版本装在 `~/.local/share/cannbot-gateway-proxy/`，重跑 `./install.sh` 会把旧目录**整体迁移**到新目录（providers.json/待办/统计全保留）并清掉旧 label 的 plist。
+本目录是**项目源**（仓库名 `personal_workshop`，项目定位 2026-11 已更名 personal_gateway）；任务计划程序运行的是 `install.ps1` 拷贝到 `%LOCALAPPDATA%\personal-gateway\` 的**运行时副本**。2026-10 及更早版本装在 `%LOCALAPPDATA%\cannbot-gateway-proxy\`，重跑 `.\install.ps1` 会把旧目录的数据迁移到新目录（providers.json/待办/统计全保留）。
 
-**源目录布局（2026-11 重排）**：仓库根只留入口与代码——`server.mjs`、`lib/`、`test/`、`skills/`、`docs/`、`README.md`、`CLAUDE.md`；静态资源在 `web/`（`index.html`、`theme.css`）；平台脚本与模板在 `deploy/`（install/uninstall/status 的 .sh 与 .ps1、`plist.template`、`providers.template.json`、两个 `打开管理界面.*`）；诊断工具在 `scripts/`（`cannbot-creds.sh`）。**包装脚本的路径语义**：`deploy/*` 里的脚本用 `$(dirname "$0")/..`（PowerShell 用 `Split-Path -Parent $PSScriptRoot`）定位仓库根；`server.mjs` 读静态资源时**先查同目录、再查 `web/`**——运行时副本把 `web/` 里的两个文件摊平拷到根，源目录则读 `web/`，两种布局都不需要额外配置。仓库根的 `install.sh` / `install.ps1`（以及 uninstall/status）是几行的**转发壳**，让 `./install.sh` 这类历史命令继续可用。
+**源目录布局（2026-11 重排）**：仓库根只留入口与代码——`server.mjs`、`lib/`、`test/`、`skills/`、`docs/`、`README.md`、`CLAUDE.md`；静态资源在 `web/`（`index.html`、`theme.css`）；Windows 脚本与模板在 `deploy/`（`install.ps1`、`uninstall.ps1`、`status.ps1`、`providers.template.json`、`打开管理界面.bat`）；诊断工具在 `scripts/`（`cannbot-creds.sh`）。**路径语义**：`deploy/*.ps1` 用 `Split-Path -Parent $PSScriptRoot` 定位仓库根；`server.mjs` 读静态资源时**先查同目录、再查 `web/`**——运行时副本把 `web/` 里的两个文件摊平拷到根，源目录则读 `web/`，两种布局都不需要额外配置。仓库根的三个 `.ps1` 是几行的**转发壳**，让 `.\install.ps1` 这类命令与文件位置解耦。
 
-**改动 `server.mjs`、`lib/`、`web/index.html`、`web/theme.css` 后必须重跑对应安装脚本（macOS `./install.sh` / Windows `.\install.ps1`）才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、`logs/proxy.err.log`、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。环境变量前缀 2026-11 起 **CANNBOT_ → PGW_**（统一走 lib/env.mjs 读取：PGW_ 优先、同名旧 CANNBOT_ 兜底，旧 plist/外部脚本不至于一夜失效）。运行时文件位置可用 `PGW_CONFIG_FILE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` 覆盖；报告数据源根路径可用 `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
+**改动 `server.mjs`、`lib/`、`web/index.html`、`web/theme.css` 后必须重跑 `.\install.ps1` 才生效。** 运行时产物（providers.json、proxy.log、vk-cache.json、stats.json、todos.json、reports.json、`logs/proxy.err.log`、port 记录）都在运行时目录，不在本目录排障。**providers.json 改动不用重装**——网关按 mtime 热加载（lib/config.mjs）。环境变量前缀 2026-11 起 **CANNBOT_ → PGW_**（统一走 lib/env.mjs 读取：PGW_ 优先、同名旧 CANNBOT_ 兜底，外部脚本不至于一夜失效）。运行时文件位置可用 `PGW_CONFIG_FILE` / `PGW_LOG_FILE` / `PGW_STATS_FILE` / `PGW_TODOS_FILE` / `PGW_REPORTS_FILE` 覆盖；报告数据源根路径可用 `PGW_CC_DIR` / `PGW_ZCODE_DB` / `PGW_OPENCODE_DB` / `PGW_CURSOR_DIR` 覆盖（test/smoke.mjs 即用它们把产物与数据源全部隔离到临时目录）。
 
 ## 架构（模块图）
 
@@ -86,7 +82,7 @@ lib/quota.mjs          编码套餐额度查询（Kimi / 智谱 / CANNWork 三�
 lib/home.mjs           首屏数据组装（纯函数可注入）：待办裁剪（进行中全收 / 待办前 8 / 今天完成
                      前 3，超出给 hidden 数）+ 每订阅花费与额度。标题数「所有未完成」，
                       措辞不用「今天」——积压几天的也在里面。额度失败降级不拖垮整页
-lib/sync-snapshot.mjs Mac↔Mac 同步快照纯函数（rev=updated_at，支持 since 增量）；
+lib/sync-snapshot.mjs 双机同步快照纯函数（rev=updated_at，支持 since 增量）；
                       墓碑以 {id, rev, deleted: true} 下发、cursor 计入墓碑 rev（否则增量拉取漏删）
 lib/sync-server.mjs   同步监听（gateway.sync，默认关闭，端口 8491）：白名单 /sync/v1/*；
                       Bearer 或 X-Workshop-Token；不挂 /admin、/v1；默认 CIDR 含 Tailscale。
@@ -232,8 +228,8 @@ web/index.html        单页外壳：左栏两级分组导航（工作台 / 管�
 web/theme.css         共享主题：令牌 / 骨架 / 左栏布局契约 / 通用组件（/theme.css 提供，
                       /workbench.css 为旧缓存的兼容别名，同一份内容）
 
-deploy/               平台脚本与模板：install/uninstall/status（.sh + .ps1）、plist.template、
-                      providers.template.json、打开管理界面.command / .bat
+deploy/               Windows 脚本与模板：install.ps1 / uninstall.ps1 / status.ps1、
+                      providers.template.json、打开管理界面.bat
 scripts/cannbot-creds.sh  cannbot 凭证诊断（--sync-zcode 改写 zcode 配置）
 ```
 
@@ -297,7 +293,7 @@ rebinding）；providers 写操作（POST/PUT）、显示器切换与改名（PO
    **403 不重试**（账号权限问题，直接透传）。
 3. **防自我代理环路**：providers 的 baseUrl 必须直连上游官方域名，绝不能指向网关自身端口。
 4. **providers.json 含全部订阅凭证**：0600（Windows 收 ACL 到当前用户）、.gitignore 排除、绝不入库。模板是 `deploy/providers.template.json`
-   （`__CLIENT_TOKEN__` 占位由 install.sh / install.ps1 首次安装时以随机 token 生成，**升级不覆盖已有配置**）。
+   （`__CLIENT_TOKEN__` 占位由 install.ps1 首次安装时以随机 token 生成，**升级不覆盖已有配置**）。
 
 ### 流量统计与性能采样
 
@@ -409,12 +405,10 @@ m1ddc 缺失降级提示）；
 - zcode CLI v2（`~/.zcode/v2/provider_config.json`）：`海思` provider 走网关（openai 协议 →
   `http://127.0.0.1:8484/v1`）；`glm`/`deepseek`/`openrouter` 直连各自官方端点。
 - zcode CLI 旧配置（`~/.zcode/cli/config.json`）：`cannbot` provider 走网关
-  （`cannbot-creds.sh --sync-zcode` 写入，含网关 token）；`zai`/`bigmodel` 直连。
+  （`scripts/cannbot-creds.sh --sync-zcode` 写入，含网关 token）；`zai`/`bigmodel` 直连。
 - Claude Code（`~/.claude/settings.json` env）：当前直连 GLM Coding Plan 的 anthropic 端点
   （open.bigmodel.cn），不走网关；曾经指向网关（2026-10-27 上午 zcode 桶的 130 次多轮 agent
   流量即走 Anthropic 协议直通路径）。
-- launchd label：`cn.hicann.personal-gateway`（2026-11 前为 `cn.hicann.cannbot-gateway-proxy`，
-  install/uninstall 都会对旧 label 做停用与清理；plist 由 `plist.template` sed 生成；端口经 `PGW_PROXY_PORT` 注入或运行时 `port` 文件记录）。旧版的分离热键守护 label `cn.hicann.cannbot-monitor-hotkeys` 已随功能移除，install/uninstall 仅保留对其历史安装遗留的清理路径。
 - Windows 任务计划程序任务：`PersonalGateway`（登录时触发，运行运行时目录下的
   `start-gateway.ps1` 隐藏启动 `node server.mjs`；端口经 `PGW_PROXY_PORT` 注入）。
 
@@ -422,4 +416,4 @@ m1ddc 缺失降级提示）；
 
 - `providers.json`、`creds.json`、`vk-cache.json` 含实时凭证，已在 .gitignore，**绝不入库/入源目录**。注意 `vk-cache.json` 的默认落点是服务根目录：**前台从源目录起网关联调时必须设 `PGW_VK_CACHE` 指向临时目录**（连同 `PGW_LOG_FILE`/`PGW_STATS_FILE`/`PGW_TODOS_FILE`/`PGW_REPORTS_FILE`），否则活 VK 会写进源目录（2026-10 曾发生并已清理）。
 - 服务只绑 127.0.0.1；/v1/* 要求 Bearer token（未配置 clientToken 时不校验，勿在生产默认关闭）。
-- 网关 token 的防护边界：挡盲扫与误暴露；单用户 Mac 上同 uid 进程仍可读凭证文件（README 有如实说明）。
+- 网关 token 的防护边界：挡盲扫与误暴露；单用户机器上同 uid 进程仍可读凭证文件（README 有如实说明）。

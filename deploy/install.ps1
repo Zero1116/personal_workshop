@@ -6,7 +6,7 @@ install.ps1 — 启用个人网关（Windows：任务计划程序登录自启 + 
 停用: .\uninstall.ps1
 状态: .\status.ps1
 
-目录设计（与 macOS 的 install.sh 对应）：
+目录设计：
   项目源目录 = 本脚本所在目录的上一级（仓库根，维护 server.mjs / lib/ 的地方）；
   运行时目录 = %LOCALAPPDATA%\personal-gateway（可用 PGW_RUNTIME_DIR 覆盖），
   安装时把 server.mjs + lib/ + web/index.html + web/theme.css 拷贝过去（运行时摊平到根）；
