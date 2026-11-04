@@ -2166,7 +2166,7 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
       && /renderIfChanged\('log', r\.lines,/.test(idxHtml)
       && /renderIfChanged\('monitors', \{ \.\.\.d, cached: undefined \}/.test(idxHtml)
       && /renderIfChanged\('home', d,/.test(idxHtml));
-    // /admin/tv-opencode 的 4xx/5xx JSON 错误壳要如实抛出（曾落进「未识别为枢纽或投稿端」
+    // /admin/tv-claude 的 4xx/5xx JSON 错误壳要如实抛出（曾落进「未识别为枢纽或投稿端」
     // 分支，把瞬时故障误导成配置错误）；5s 轮询/切视图/开面板三方并发要有乱序防护
     check('OpenCode 页错误壳如实抛出 + 乱序防护',
       /if \(d && d\.error\) throw new Error\(/.test(idxHtml)
@@ -2192,18 +2192,21 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('大屏面板 Esc 退出（capture 阶段，早于输入框守卫）',
       /addEventListener\('keydown', \(e\) => \{\s*\n\s*if \(e\.key === 'Escape' && ocBoardOpen\)/.test(idxHtml));
     check('大屏开着时轮询带 rich=1（小卡与面板同吃一份数据）',
-      /\/admin\/tv-opencode\?preview=1\$\{ocBoardOpen \? '&rich=1' : ''\}/.test(idxHtml)
-        && /if \(curView !== 'opencode' && !ocBoardOpen\) return/.test(idxHtml));
+      /\/admin\/tv-claude\?preview=1\$\{ocBoardOpen \? '&rich=1' : ''\}/.test(idxHtml)
+        && /if \(curView !== 'claude' && !ocBoardOpen\) return/.test(idxHtml));
     check('大屏渲染覆盖：工具时间线 / 任务 / 会话卡三块都有容器',
       idxHtml.includes('id="ocBoardTools"') && idxHtml.includes('id="ocBoardTasks"')
         && idxHtml.includes('id="ocBoardSessions"') && idxHtml.includes('id="ocBoardBar"'));
     check('任务列表填满右卡（flex:1，不塌在顶上一条）',
       /\.oc-board-card \.oc-tasks \{ flex: 1 1 auto; min-height: 0; overflow-y: auto; \}/.test(idxHtml)
         && /id="ocBoardTasks" class="oc-tasks"/.test(idxHtml));
-    check('#monitor 深链：冷启动与 hashchange 都开面板；关面板归一回 #opencode',
-      /if \(h === 'monitor'\) return 'opencode';/.test(idxHtml)
+    check('#monitor 深链：冷启动与 hashchange 都开面板；关面板归一回 #claude',
+      /if \(h === 'monitor'\) return 'claude';/.test(idxHtml)
         && /if \(h === 'monitor'\) setOcBoard\(true\);/.test(idxHtml)
-        && /if \(location\.hash === '#monitor'\) history\.replaceState\(null, '', '#opencode'\)/.test(idxHtml));
+        && /if \(location\.hash === '#monitor'\) history\.replaceState\(null, '', '#claude'\)/.test(idxHtml));
+    // 换数据源时视图改名，#opencode 旧深链必须仍能落到新视图
+    check('#opencode 作为历史别名仍落到 claude 视图',
+      /VIEW_ALIASES\s*=\s*\{[^}]*opencode:\s*'claude'/.test(idxHtml));
     check('导航是真链接（不用 button 切视图）', !/class="viewbtn"[^>]*data-view/.test(idxHtml));
     // 禁 break-all：只认「规则里真的用了」，注释里提到这个词（作为禁令说明）不算
     const cssRulesOnly = themeCssText.replace(/\/\*[\s\S]*?\*\//g, '');

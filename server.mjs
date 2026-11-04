@@ -26,7 +26,7 @@ import { log, tailLog } from './lib/log.mjs';
 import { getConfig, tryGetConfig, getProvider, bindInboundEndpoint } from './lib/config.mjs';
 import { statsSnapshot, flushStats } from './lib/stats.mjs';
 import { listModels, resolveModelRoute, defaultProvider, peekModelsKnown, checkProviderCatalog } from './lib/models.mjs';
-import { providersView, createProvider, updateProvider, deleteProvider, saveRemoteProjects, tvOpenCodeStatus, tvOpenCodePreview, saveTvOpenCodeSettings } from './lib/providers-admin.mjs';
+import { providersView, createProvider, updateProvider, deleteProvider, saveRemoteProjects, tvClaudeStatus, tvClaudePreview, saveTvClaudeSettings } from './lib/providers-admin.mjs';
 import { forward, readRequestBody, withUpstreamModel } from './lib/proxy-openai.mjs';
 import { handleAnthropicInbound, handleOpenAIToAnthropic } from './lib/proxy-anthropic.mjs';
 import { checkClientAuth } from './lib/gwauth.mjs';
@@ -334,8 +334,8 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true, ...saveRemoteProjects(payload.remoteProjects, { port: PORT }) });
     }
 
-    // 电视 OpenCode 多源：读枢纽源/spoke 投稿状态；写 opencodeSource / publishOpenCode（热生效）。
-    if (url === '/admin/tv-opencode') {
+    // 电视 Claude Code 多源：读枢纽源/spoke 投稿状态；写 claudeSource / publishClaude（热生效）。
+    if (url === '/admin/tv-claude') {
       if (req.method === 'GET') {
         if (!isLocalHost(req)) {
           return sendJson(res, 403, { error: { message: '仅允许通过 127.0.0.1/localhost 访问此端点', type: 'forbidden' } });
@@ -343,8 +343,8 @@ const server = http.createServer(async (req, res) => {
         // ?preview=1 → 附带与电视同源的汇聚帧，供管理台监控卡；&rich=1 → 大屏监控档
         const wantPreview = /[?&]preview=1\b/.test(req.url || '');
         const wantRich = /[?&]rich=1\b/.test(req.url || '');
-        if (!wantPreview) return sendJson(res, 200, tvOpenCodeStatus());
-        return tvOpenCodePreview({ rich: wantRich }).then((body) => sendJson(res, 200, body));
+        if (!wantPreview) return sendJson(res, 200, tvClaudeStatus());
+        return tvClaudePreview({ rich: wantRich }).then((body) => sendJson(res, 200, body));
       }
       if (req.method === 'POST') {
         if (!isLocalHost(req)) {
@@ -359,7 +359,7 @@ const server = http.createServer(async (req, res) => {
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
           return sendJson(res, 400, { error: { message: '请求体须为 JSON 对象', type: 'bad_request' } });
         }
-        return sendJson(res, 200, saveTvOpenCodeSettings(payload, { port: PORT }));
+        return sendJson(res, 200, saveTvClaudeSettings(payload, { port: PORT }));
       }
       return sendJson(res, 405, { error: { message: '此端点仅支持 GET/POST', type: 'method_not_allowed' } });
     }

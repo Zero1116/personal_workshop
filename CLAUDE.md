@@ -62,21 +62,32 @@ lib/config.mjs        providers.json 加载/校验/热重载（baseUrl 归一化
 lib/providers-admin.mjs  管理台对 providers.json 的增删改（写前整体校验 + 防自环、
                       原子落盘 0600、读视图只出 token 掩码、编辑留空 token=沿用）
 lib/gwauth.mjs        客户端 Bearer token 校验（timingSafeEqual；safeEqual 与 TV token 校验共用）
-lib/tv-opencode.mjs   电视 OpenCode 战况墙（纯函数 + 读 session_v2）：idle/running/done 帧，ETag 忽略 now/elapsedMs/tools.at；
-                      rich 档（管理台大屏监控）：tools 24/sessions 8/tasks 20/title 160，出口 32KB 兜底，电视 6KB 契约不变
-                      （最新会话与 sessions 小卡同口径只取顶层会话——parent_id IS NULL，
-                      subagent 的 time_updated 最新会把主卡换成 explore）
-lib/tv-opencode-hub.mjs
-                      OpenCode 多源枢纽：spokeFrames（有界：僵尸 >450s 淘汰、设备 ≤16、
-                      读路径同样清理）；deviceId 首认领制（别的 token 冒名 → 409）；
-                      投稿入站走键白名单 + 嵌套逐字段校验（session/plan/tools 都不
-                      放过，junk 键曾能透传到电视出口）；resolveOpenCodeForTv 按
-                      local/auto/spoke:* 选帧，出口带 source
+lib/tv-claude.mjs     电视 Claude Code 战况墙（纯函数 + 读 ~/.claude/projects/*.jsonl）：
+                      running/waiting/done 帧；**不需要 sqlite3**（纯文本 JSONL）。
+                      三条实测约束（2026-11-04 对 2718 行 / 5.77MB 会话采样）：
+                      ① token 按 message.id 去重——流式响应会拆成多行、每行复制同一份 usage，
+                         直接累加虚高 1.66 倍；
+                      ② **绝不用文件 mtime 判活跃**——启动/恢复会追加无 timestamp 的元数据行
+                         （mode/last-prompt/atis-latch…）刷新 mtime 却不产生内容，实测差 86,822 秒；
+                         只认「带 timestamp 的内容行」的 lastContentAt；
+                      ③ 状态优先级：在飞 api-request（等模型）→ 未配对 tool_use（跑工具；
+                         AskUserQuestion 算 waiting）→ 末行 assistant 新鲜（流式）→ typed user（等模型）
+                         → system/turn_duration（回合结束）→ idle；
+                      只读文件尾部 256KB（单行 p99 17.8KB / max 103KB），丢掉首行（必是半截）。
+                      ETag 剥离 now/elapsedMs（否则每个取样点都变，304 永不命中）。
+                      rich 档（管理台大屏监控）：tools 24/sessions 8/title 160，出口 32KB 兜底，
+                      电视 6KB 契约不变
+lib/tv-claude-hub.mjs
+                      Claude 多源枢纽（与数据源无关的通用层）：spokeFrames（有界：僵尸 >450s 淘汰、
+                      设备 ≤16、读路径同样清理）；deviceId 首认领制（别的 token 冒名 → 409）；
+                      投稿入站走键白名单 + 嵌套逐字段校验（session/tools/sessions 都不放过，
+                      junk 键曾能透传到电视出口）；resolveClaudeForTv 按 local/auto/spoke:* 选帧，
+                      出口带 source
 lib/tv-snapshot.mjs   电视工作台快照（纯函数）：listTodos()+statsSnapshot() → 2–6 KB JSON，
                       裁掉 spans/perf/days[]/prices、note/标题截断、服务端算好 runningMs/doneToday；
                       ETag 只哈希数据本身（不含 now/runningMs，否则每分钟都 304 不命中）
 lib/tv-server.mjs     电视 LAN 监听（gateway.tv，默认关闭；同进程第二监听，8484 一行不动）：
-                      白名单 GET /tv/v1/snapshot|opencode|health，其余 404；Host 反 rebinding → 来源
+                      白名单 GET /tv/v1/snapshot|claude|health，其余 404；Host 反 rebinding → 来源
                       allowedCidrs → 白名单 → X-Aerial-Token（timingSafeEqual）→ 30 次/分钟/token
                       （日志只记 token 名/前缀 + IP + 状态码）
 lib/quota.mjs          编码套餐额度查询（Kimi / 智谱 / CANNWork 三种）：
@@ -102,11 +113,11 @@ lib/sync-server.mjs   同步监听（gateway.sync，默认关闭，端口 8491�
                       删除幂等（再删 204）；PATCH/POST 撞墓碑：不新于墓碑 → 409 带
                       deleted 墓碑，新于墓碑 → 复活（LWW；复活判定认 rev 即使请求体
                       只带 rev 不带 updated_at）；
-                      PUT /sync/v1/opencode[?rich=1] 收 spoke 的 OpenCode 投稿帧
+                      PUT /sync/v1/claude[?rich=1] 收 spoke 的 Claude 投稿帧
                       （瘦 6KB 电视契约 / rich 32KB 大屏监控档，同 deviceId 覆盖）
 lib/sync-client.mjs   同步客户端（gateway.syncClient，默认关闭）：spoke 轮询枢纽 snapshot，
                       按 id/rev 合并待办、按墓碑删除；本地删除推 DELETE（404 视为删成）；
-                      OpenCode 投稿（publishOpenCode）每轮投两帧：**先瘦后 rich**——hub
+                      Claude 投稿（publishClaude）每轮投两帧：**先瘦后 rich**——hub
                       对同 deviceId 单槽覆盖（后到赢），顺序反了 rich 永远被瘦帧盖掉、
                       大屏监控档对 spoke 源从不生效；旧 hub 拒收 rich 只记日志，不影响
                       上墙；不另起监听
@@ -229,7 +240,7 @@ lib/report/generate.mjs 报告生成状态机：单任务串行（409）、colle
 lib/report-prompts.mjs 两级总结 prompt + 压缩/脱敏阈值**全部集中在此**——调汇报质量只改这里。
                       成稿**正文按待办分节**（每条 80-150 字，不再是每节 3 条长 bullet）、
                       未归属工作进末尾「## 其他」一行一条，整体 ≤700 字
-web/index.html        单页外壳：左栏两级分组导航（工作台 / 管理台）+ 八个视图（#opencode 含全屏大屏监控面板）
+web/index.html        单页外壳：左栏两级分组导航（工作台 / 管理台）+ 八个视图（#claude 含全屏大屏监控面板，`#opencode` 为旧深链别名）
                       （首屏 / 待办 / 汇报 / 总览 / 统计 / 诊断 / 配置）全部逻辑内联在一段脚本里。
                       首屏（#home）：左待办右订阅卡，数据走 GET /admin/home；额度 60 秒缓存，
                       切走时停轮询。
@@ -326,7 +337,7 @@ User-Agent 取的**产品名/版本**（剥掉 OS 注释与括号，超长截断
 `<a href="#v">`（可中键新开、可复制、Tab 可达），由 `hashchange` 驱动切视图：
 
 ```
-工作台  [默认展开]     首屏 #home（落地默认）· OpenCode #opencode（含全屏大屏监控，
+工作台  [默认展开]     首屏 #home（落地默认）· Claude Code #claude（含全屏大屏监控，
                        #monitor 深链直开面板）· 待办 #todos · 汇报 #report
 管理台  [默认收起]     总览 #overview · 统计 #traffic · 诊断 #test · 配置 #providers
 ```

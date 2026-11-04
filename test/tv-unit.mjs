@@ -10,20 +10,29 @@ import { inCidrs, hostAllowed, normalizeAddress, matchTvToken, createRateLimiter
 import { normalizeTv, TV_DEFAULT_CIDRS } from '../lib/config.mjs';
 import { safeEqual } from '../lib/gwauth.mjs';
 import {
-  buildOpenCodeSnapshot, buildDemoOpenCodeSnapshot, deriveStatus, mapToolStatus, mapTaskState,
-  extractTools, extractTasks, etagOfOpenCode, fitOpenCodeToLimit, OPENCODE_MAX_BYTES,
-  buildSessionBrief, buildSessionBriefs, SESSIONS_MAX, RICH_LIMITS, OPENCODE_RICH_MAX_BYTES,
-} from '../lib/tv-opencode.mjs';
+  buildClaudeSnapshot, buildDemoClaudeSnapshot, deriveSessionState, lastContentAt,
+  extractTools, extractMeta, etagOfClaude, fitClaudeToLimit, CLAUDE_MAX_BYTES,
+  SESSIONS_MAX, RICH_LIMITS, claudeSnapshotNow,
+} from '../lib/tv-claude.mjs';
 import {
-  putSpokeOpenCodeFrame, clearSpokeOpenCodeFrames, resolveOpenCodeForTv,
-  sanitizeSpokeOpenCodePayload, parseOpenCodeSource,
-} from '../lib/tv-opencode-hub.mjs';
+  putSpokeClaudeFrame, clearSpokeClaudeFrames, resolveClaudeForTv,
+  sanitizeSpokeClaudePayload, parseClaudeSource, normalizeClaudeSource,
+} from '../lib/tv-claude-hub.mjs';
 
 let passed = 0;
 const failures = [];
+const pendingChecks = [];
 function check(name, fn) {
-  try { fn(); passed++; }
-  catch (e) { failures.push(name); console.log(`  ✗ ${name} — ${e.message}`); }
+  try {
+    const r = fn();
+    if (r && typeof r.then === 'function') { pendingChecks.push({ name, r }); return; }
+    passed++;
+  } catch (e) { failures.push(name); console.log(`  ✗ ${name} — ${e.message}`); }
+}
+async function settle() {
+  for (const { name, r } of pendingChecks) {
+    try { await r; passed++; } catch (e) { failures.push(name); console.log(`  ✗ ${name} — ${e.message}`); }
+  }
 }
 const group = (title) => console.log(`— ${title} —`);
 
@@ -414,312 +423,245 @@ check('cacheSeconds / maxPerMinute 边界', () => {
   assert.equal(normalizeTv({ maxPerMinute: 5 }).maxPerMinute, 5);
 });
 
-group('OpenCode status / maps');
-check('mapToolStatus pending/error', () => {
-  assert.equal(mapToolStatus('pending'), 'running');
-  assert.equal(mapToolStatus('running'), 'running');
-  assert.equal(mapToolStatus('error'), 'failed');
-  assert.equal(mapToolStatus('completed'), 'ok');
+group('Claude Code 状态机');
+check('extractTools：未配对 tool_use = running，配对上 = ok，带 error = failed', () => {
+  const lines = [
+    { type: 'assistant', timestamp: '2026-01-01T00:00:00Z', message: { content: [
+      { type: 'tool_use', id: 'a', name: 'Read', input: { file_path: '/p/a.mjs' } },
+      { type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'npm test' } },
+      { type: 'tool_use', id: 'c', name: 'Grep', input: { pattern: 'foo' } },
+    ] } },
+    { type: 'user', timestamp: '2026-01-01T00:00:01Z', message: { content: [
+      { type: 'tool_result', tool_use_id: 'a', content: 'ok' },
+      { type: 'tool_result', tool_use_id: 'b', is_error: true, content: 'boom' },
+    ] } },
+  ];
+  const tools = extractTools(lines);
+  assert.equal(tools.length, 3);
+  const byId = Object.fromEntries(tools.map((t) => [t.id, t]));
+  assert.equal(byId.a.status, 'ok');
+  assert.equal(byId.b.status, 'failed');
+  assert.equal(byId.c.status, 'running');
+  assert.equal(byId.a.target, '/p/a.mjs');
+  assert.equal(byId.b.target, 'npm test');
 });
-check('mapTaskState', () => {
-  assert.equal(mapTaskState('completed'), 'done');
-  assert.equal(mapTaskState('in_progress'), 'running');
-  assert.equal(mapTaskState('pending'), 'pending');
+check('deriveSessionState：在飞 api-request → running（等模型）', () => {
+  const lines = [
+    { type: 'user', timestamp: '2026-01-01T00:00:00Z', message: { content: 'hi' }, promptSource: 'typed' },
+    { type: 'api-request', id: 'req1', timestamp: '2026-01-01T00:00:01Z' },
+  ];
+  assert.equal(deriveSessionState(lines, Date.parse('2026-01-01T00:00:02Z')).status, 'running');
 });
-check('deriveStatus：工具 running 优先；busy>idle → running；succeeded → done', () => {
-  assert.equal(deriveStatus({ tools: [{ status: 'running' }] }), 'running');
-  assert.equal(deriveStatus({ timeBusy: 10, timeIdle: 5, now: 20 }), 'running');
-  assert.equal(deriveStatus({ timeBusy: 5, timeIdle: 10, idleOutcome: 'succeeded', now: 20 }), 'done');
-  assert.equal(deriveStatus({ idleOutcome: 'failed', now: 20 }), 'failed');
-  assert.equal(deriveStatus({ now: 20 }), 'idle');
+check('deriveSessionState：api-request 已配对 + end_turn → done', () => {
+  const lines = [
+    { type: 'api-request', id: 'req1', timestamp: '2026-01-01T00:00:01Z' },
+    { type: 'assistant', requestRef: 'req1', timestamp: '2026-01-01T00:00:03Z',
+      message: { content: [{ type: 'text', text: 'done' }], stop_reason: 'end_turn' } },
+  ];
+  assert.equal(deriveSessionState(lines, Date.parse('2026-01-01T00:00:04Z')).status, 'done');
+});
+check('deriveSessionState：未配对 AskUserQuestion → waiting（等人，不是卡死）', () => {
+  const lines = [
+    { type: 'assistant', timestamp: '2026-01-01T00:00:00Z', message: { content: [
+      { type: 'tool_use', id: 'q', name: 'AskUserQuestion', input: { questions: [] } },
+    ] } },
+  ];
+  assert.equal(deriveSessionState(lines, Date.parse('2026-01-01T00:00:30Z')).status, 'waiting');
+});
+check('deriveSessionState：turn_duration 收尾 → done', () => {
+  const lines = [
+    { type: 'assistant', timestamp: '2026-01-01T00:00:00Z',
+      message: { content: [{ type: 'text', text: '答完了' }], stop_reason: 'end_turn' } },
+    { type: 'system', subtype: 'turn_duration', timestamp: '2026-01-01T00:00:00.020Z' },
+  ];
+  assert.equal(deriveSessionState(lines, Date.parse('2026-01-01T00:10:00Z')).status, 'done');
+});
+check('deriveSessionState：久无写入且无收尾 → idle', () => {
+  const lines = [
+    { type: 'assistant', timestamp: '2026-01-01T00:00:00Z', message: { content: [{ type: 'text', text: 'x' }] } },
+  ];
+  assert.equal(deriveSessionState(lines, Date.parse('2026-01-01T05:00:00Z')).status, 'idle');
+});
+check('lastContentAt 忽略无 timestamp 的元数据行（启动会刷新 mtime 但不算活跃）', () => {
+  const lines = [
+    { type: 'assistant', timestamp: '2026-01-01T00:00:00Z', message: { content: [] } },
+    { type: 'last-prompt', lastPrompt: '恢复会话' },
+    { type: 'mode', mode: 'default' },
+    { type: 'permission-mode', mode: 'default' },
+  ];
+  assert.equal(lastContentAt(lines), Date.parse('2026-01-01T00:00:00Z'));
 });
 
-group('OpenCode snapshot');
-check('无会话 → online idle', () => {
-  const s = buildOpenCodeSnapshot({ now: 1000 });
+group('Claude Code 快照');
+const mkLines = ({ withResult = false, title = '会话标题' } = {}) => {
+  const t = (s) => new Date(1_000_000 + s * 1000).toISOString();
+  const lines = [
+    { type: 'ai-title', aiTitle: title },
+    { type: 'user', promptSource: 'typed', cwd: '/p/project-a', gitBranch: 'feat/x', timestamp: t(0), message: { content: '做事' } },
+    { type: 'assistant', timestamp: t(1), message: {
+      id: 'm1', model: 'claude-opus-5-5', stop_reason: 'tool_use',
+      usage: { input_tokens: 100, output_tokens: 20 },
+      content: [{ type: 'tool_use', id: 'c1', name: 'Edit', input: { file_path: 'a.kt' } }],
+    } },
+  ];
+  if (withResult) {
+    lines.push({ type: 'user', timestamp: t(2), message: { content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'ok' }] } });
+  }
+  return lines;
+};
+check('无行 → online idle 极简帧（不含 elapsedMs/tokens）', () => {
+  const s = buildClaudeSnapshot({ now: 1000 });
   assert.equal(s.online, true);
   assert.equal(s.status, 'idle');
   assert.equal(s.demo, false);
   assert.equal(s.now, 1000);
   assert.equal(s.session, undefined);
+  assert.equal(s.elapsedMs, undefined);
 });
-check('完成会话：done + tokens + tools + plan', () => {
-  const s = buildOpenCodeSnapshot({
-    now: 10_000,
-    branch: 'feat/x',
-    session: {
-      id: 'ses_1', title: '战况墙', directory: '/Users/tom/Desktop/project/aerial-tv',
-      model: { id: 'deepseek-v4.1-flash', providerID: 'pg' }, agent: 'build',
-      time_created: 0, time_updated: 9_000, time_busy: 1_000, time_idle: 9_000,
-      idle_outcome: 'succeeded', tokens_input: 100, tokens_output: 20, tokens_reasoning: 5,
-    },
-    todos: [
-      { position: 0, content: '已做', status: 'completed' },
-      { position: 1, content: '进行中', status: 'in_progress' },
-    ],
-    messages: [{
-      id: 'm1', time_updated: 8_000,
-      data: { content: [
-        { type: 'tool', id: 'c1', name: 'edit', state: { status: 'completed', input: { path: 'a.kt' } } },
-        { type: 'tool', id: 'c2', name: 'shell', state: { status: 'pending', input: { command: 'gradlew test' } } },
-      ] },
-    }],
-  });
-  // 有 pending 工具 → running，即使 idle_outcome=succeeded
+check('运行中：未配对工具 + step + 会话元数据', () => {
+  const s = buildClaudeSnapshot({ lines: mkLines(), sessionId: 'ses1', now: 1_000_000 + 3000 });
   assert.equal(s.status, 'running');
-  assert.equal(s.session.project, 'aerial-tv');
+  assert.equal(s.session.id, 'ses1');
+  assert.equal(s.session.project, 'project-a');
   assert.equal(s.session.branch, 'feat/x');
-  assert.equal(s.session.model, 'pg/deepseek-v4.1-flash');
-  assert.equal(s.session.agent, 'build');
-  assert.equal(s.tokens, 125);
-  assert.equal(s.tools[0].name, 'edit');
-  assert.equal(s.tools[1].status, 'running');
-  assert.equal(s.plan.tasks[1].state, 'running');
-  assert.equal(s.step, '进行中');
+  assert.equal(s.session.model, 'claude-opus-5-5');
+  assert.equal(s.session.agent, 'claude-code');
+  assert.equal(s.step, 'Edit a.kt');
+  assert.equal(s.tokens, 120);
+  assert.equal(s.title, '会话标题');
 });
-check('extractTools 截到 8；无 name 丢弃', () => {
-  const msgs = [{
-    id: 'm', time_updated: 1,
-    data: { content: [
-      { type: 'tool', id: 'x', name: '', state: { status: 'completed' } },
-      ...Array.from({ length: 10 }, (_, i) => ({ type: 'tool', id: `c${i}`, name: `t${i}`, state: { status: 'completed', input: { path: `f${i}` } } })),
-    ] },
-  }];
-  assert.equal(extractTools(msgs).length, 8);
-  assert.equal(extractTasks([{ content: 'a', status: 'pending' }, { content: '', status: 'pending' }]).length, 1);
+check('token 按 message.id 去重（流式多行重复同一份 usage，不能累加）', () => {
+  const t = (s) => new Date(1_000_000 + s * 1000).toISOString();
+  const lines = [0, 1].map((i) => ({
+    type: 'assistant', timestamp: t(i),
+    message: { id: 'msg-dup', model: 'm', usage: { input_tokens: 100, output_tokens: 50 }, content: [] },
+  }));
+  assert.equal(extractMeta(lines).tokens, 150); // 不是 300
 });
-check('演示帧带 demo=true 且同相位 ETag 稳定', () => {
-  const a = buildDemoOpenCodeSnapshot(1_000);
-  const b = buildDemoOpenCodeSnapshot(1_000 + 72_000);
-  assert.equal(a.demo, true);
-  assert.equal(a.status === 'running' || a.status === 'done', true);
-  assert.equal(a.title, b.title);
-  assert.equal(etagOfOpenCode(JSON.stringify(a)), etagOfOpenCode(JSON.stringify(b)));
-});
-check('ETag 忽略 now/elapsedMs；status 变则变', () => {
-  const base = buildOpenCodeSnapshot({
-    now: 1, session: { id: 's', title: 't', directory: '/p/x', time_created: 0, time_updated: 1, idle_outcome: 'succeeded', time_idle: 1, time_busy: 0 },
-  });
-  const later = { ...base, now: 999, elapsedMs: base.elapsedMs + 100 };
-  assert.equal(etagOfOpenCode(JSON.stringify(base)), etagOfOpenCode(JSON.stringify(later)));
-  assert.notEqual(etagOfOpenCode(JSON.stringify(base)), etagOfOpenCode(JSON.stringify({ ...base, status: 'running' })));
-});
-check('fitOpenCodeToLimit 不超 6KB', () => {
-  const fat = buildOpenCodeSnapshot({
-    now: 1,
-    session: { id: 's', title: '题'.repeat(200), directory: '/p/' + 'x'.repeat(80), time_created: 0, time_updated: 1, idle_outcome: 'succeeded', time_idle: 1 },
-    todos: Array.from({ length: 8 }, (_, i) => ({ position: i, content: '任'.repeat(100), status: 'pending' })),
-    messages: [{ id: 'm', time_updated: 1, data: { content: Array.from({ length: 8 }, (_, i) => ({
-      type: 'tool', id: `c${i}`, name: 'edit', state: { status: 'completed', input: { path: '路'.repeat(200) } },
-    })) } }],
-  });
-  const fitted = fitOpenCodeToLimit(fat);
-  assert.ok(Buffer.byteLength(JSON.stringify(fitted)) <= OPENCODE_MAX_BYTES);
+check('已完成：工具全部配对 + turn_duration → done', () => {
+  const lines = mkLines({ withResult: true });
+  lines.push({ type: 'system', subtype: 'turn_duration', timestamp: new Date(1_000_000 + 2500).toISOString() });
+  const s = buildClaudeSnapshot({ lines, now: 1_000_000 + 3000 });
+  assert.equal(s.status, 'done');
+  assert.equal(s.stepIndex, 1);
+  assert.equal(s.stepTotal, 1);
+  assert.equal(s.progress, 1);
 });
 
-
-check('parseOpenCodeSource 默认/非法 → local', () => {
-  assert.equal(parseOpenCodeSource(undefined).mode, 'local');
-  assert.equal(parseOpenCodeSource('spoke:macbook').deviceId, 'macbook');
-  assert.equal(parseOpenCodeSource('spoke:bad id!').mode, 'local');
-  assert.equal(parseOpenCodeSource('auto').mode, 'auto');
+group('Claude Code 裁剪与 ETag');
+check('etag 稳定：同数据同 ETag，数据变则变', () => {
+  const a = JSON.stringify({ status: 'idle', title: 'x' });
+  assert.equal(etagOfClaude(a), etagOfClaude(JSON.stringify({ status: 'idle', title: 'x' })));
+  assert.notEqual(etagOfClaude(a), etagOfClaude(JSON.stringify({ status: 'running', title: 'x' })));
 });
-check('枢纽 resolve：local 带 source.kind=local', () => {
-  clearSpokeOpenCodeFrames();
-  const out = resolveOpenCodeForTv({
-    opencodeSource: 'local',
-    localFrame: { now: 1, online: true, status: 'idle', title: '本机' },
-    now: 1000,
-  });
-  assert.equal(out.source.kind, 'local');
-  assert.equal(out.title, '本机');
-  assert.ok(out.source.host);
+check('fit 到 6KB：大量工具被逐级裁剪', () => {
+  const many = [];
+  for (let i = 0; i < 200; i++) {
+    many.push({ type: 'assistant', timestamp: new Date(1_000_000 + i).toISOString(), message: {
+      content: [{ type: 'tool_use', id: `t${i}`, name: 'Edit', input: { file_path: '巨'.repeat(300) } }],
+    } });
+  }
+  const s = buildClaudeSnapshot({ lines: mkLines().concat(many), now: 1_000_000 + 500 });
+  assert.ok(Buffer.byteLength(JSON.stringify(fitClaudeToLimit(s))) <= CLAUDE_MAX_BYTES);
 });
-check('枢纽 resolve：spoke 新鲜帧优先；过期回落本机', () => {
-  clearSpokeOpenCodeFrames();
-  putSpokeOpenCodeFrame('macbook', { now: 1, online: true, status: 'running', title: 'MB' }, { receivedAt: 900 });
-  const hit = resolveOpenCodeForTv({
-    opencodeSource: 'spoke:macbook',
-    localFrame: { now: 1, online: true, status: 'idle', title: '本机' },
-    now: 1000,
-    staleMs: 45_000,
-  });
-  assert.equal(hit.source.kind, 'spoke');
-  assert.equal(hit.source.id, 'macbook');
-  assert.equal(hit.title, 'MB');
-  const miss = resolveOpenCodeForTv({
-    opencodeSource: 'spoke:macbook',
-    localFrame: { now: 1, online: true, status: 'idle', title: '本机' },
-    now: 100_000,
-    staleMs: 45_000,
-  });
-  assert.equal(miss.source.kind, 'local');
-  assert.equal(miss.title, '本机');
+check('demo 帧符合契约（status 合法、体积 ≤6KB）', () => {
+  const d = buildDemoClaudeSnapshot(1_000_000);
+  assert.ok(['idle', 'running', 'waiting', 'done', 'failed'].includes(d.status));
+  assert.ok(Buffer.byteLength(JSON.stringify(d)) <= CLAUDE_MAX_BYTES);
 });
-check('枢纽 resolve：auto 只在 spoke running 时切', () => {
-  clearSpokeOpenCodeFrames();
-  putSpokeOpenCodeFrame('macbook', { now: 1, online: true, status: 'idle', title: 'idleMB' }, { receivedAt: 900 });
-  const idle = resolveOpenCodeForTv({
-    opencodeSource: 'auto',
-    localFrame: { now: 1, online: true, status: 'idle', title: '本机' },
-    now: 1000,
-  });
-  assert.equal(idle.source.kind, 'local');
-  putSpokeOpenCodeFrame('macbook', { now: 1, online: true, status: 'running', title: 'runMB' }, { receivedAt: 950 });
-  const run = resolveOpenCodeForTv({
-    opencodeSource: 'auto',
-    localFrame: { now: 1, online: true, status: 'idle', title: '本机' },
-    now: 1000,
-  });
-  assert.equal(run.source.kind, 'spoke');
-  assert.equal(run.title, 'runMB');
-});
-check('sanitizeSpokeOpenCodePayload 拒超大/非法', () => {
-  const { frame, deviceId } = sanitizeSpokeOpenCodePayload(
-    { online: true, status: 'running', title: 'x', deviceId: 'macbook', now: 1 },
-  );
-  assert.equal(deviceId, 'macbook');
-  assert.equal(frame.status, 'running');
-  assert.equal(frame.source, undefined);
-  let threw = false;
-  try { sanitizeSpokeOpenCodePayload(null); } catch (e) { threw = e.status === 400; }
-  assert.equal(threw, true);
+check('rich 档放宽 title 上限', () => {
+  const lines = mkLines({ title: '题'.repeat(200) });
+  const thin = buildClaudeSnapshot({ lines, now: 1_000_000 });
+  const rich = buildClaudeSnapshot({ lines, now: 1_000_000, rich: true });
+  // clip() 按码位截断并追加省略号：thin 80+1，rich 160+1
+  assert.equal(Array.from(thin.title).length, 81);
+  assert.equal(Array.from(rich.title).length, 161);
 });
 
-
-group('OpenCode sessions 小卡列表');
-const SB_NOW = 10_000_000;
-const sbMsg = (name, input, status = 'completed') => [{ id: 'm1', time_updated: SB_NOW - 1000, data: { content: [{ type: 'tool', id: 'c1', name, state: { status, input } }] } }];
-check('brief：done / 路径取文件名 / 字段瘦', () => {
-  const r = buildSessionBrief(
-    { id: 'ses_a', title: '修网关', directory: '/Users/x/proj/aerial-tv', time_updated: SB_NOW - 60_000, time_busy: SB_NOW - 200_000, time_idle: SB_NOW - 60_000, idle_outcome: 'succeeded' },
-    sbMsg('edit', { path: '/Users/x/proj/aerial-tv/lib/tv-opencode.mjs' }), SB_NOW);
-  assert.equal(r.status, 'done');
-  assert.equal(r.project, 'aerial-tv');
-  assert.equal(r.title, '修网关');
-  assert.equal(r.step, 'edit tv-opencode.mjs');
-  assert.equal(r.at, SB_NOW - 60_000);
-  assert.ok(Buffer.byteLength(JSON.stringify(r)) < 260);
-});
-check('brief：有未完成工具 → running；shell 去掉前导 cd', () => {
-  const r = buildSessionBrief(
-    { id: 'ses_b', title: 'x', directory: '/a/b', time_updated: SB_NOW - 2000, time_busy: SB_NOW - 5000, time_idle: 0 },
-    sbMsg('shell', { command: 'cd /a/b && npm test' }, 'running'), SB_NOW);
-  assert.equal(r.status, 'running');
-  assert.equal(r.step, 'shell npm test');
-});
-check('brief：遗留 busy（超 10 分钟没更新）不装成 running', () => {
-  const r = buildSessionBrief(
-    { id: 'ses_c', title: 'old', directory: '/a/b', time_updated: SB_NOW - 3_600_000, time_busy: SB_NOW - 3_600_000, time_idle: 0 }, [], SB_NOW);
-  assert.equal(r.status, 'idle');
-});
-check('brief：failed；无工具无 step；缺 title/directory 不抛', () => {
-  const r = buildSessionBrief({ id: 'ses_d', time_updated: SB_NOW, time_busy: SB_NOW - 9000, time_idle: SB_NOW - 100, idle_outcome: 'failed' }, [], SB_NOW);
-  assert.equal(r.status, 'failed');
-  assert.equal(r.step, undefined);
-  assert.equal(r.title, undefined);
-  assert.equal(buildSessionBrief(null), null);
-});
-check('briefs：最多 3 行，保持输入顺序（最新在前）', () => {
-  const sessions = [1, 2, 3, 4, 5].map((i) => ({ id: `s${i}`, title: `t${i}`, time_updated: SB_NOW - i }));
-  const rows = buildSessionBriefs({ sessions, now: SB_NOW });
-  assert.equal(rows.length, SESSIONS_MAX);
-  assert.deepEqual(rows.map((r) => r.id), ['s1', 's2', 's3']);
-});
-check('快照：sessions 挂到 out.sessions；空列表不出现该键（瘦 JSON）', () => {
-  const sessions = buildSessionBriefs({ sessions: [{ id: 's1', title: 'a', time_updated: SB_NOW }], now: SB_NOW });
-  const withS = buildOpenCodeSnapshot({ session: { id: 's1', title: 'a', time_updated: SB_NOW }, sessions, now: SB_NOW });
-  assert.equal(withS.sessions.length, 1);
-  const without = buildOpenCodeSnapshot({ session: { id: 's1', title: 'a', time_updated: SB_NOW }, now: SB_NOW });
-  assert.equal('sessions' in without, false);
-});
-check('演示帧带 3 个会话且不超 6KB；ETag 在周期内稳定', () => {
-  const d = buildDemoOpenCodeSnapshot(1_000);
-  assert.equal(d.sessions.length, 3);
-  assert.ok(Buffer.byteLength(JSON.stringify(d)) <= OPENCODE_MAX_BYTES);
-  assert.equal(etagOfOpenCode(JSON.stringify(d)), etagOfOpenCode(JSON.stringify(buildDemoOpenCodeSnapshot(1_000 + 72_000))));
-});
-check('fit：超限时先砍 sessions 到 1 行，其后整体仍合规', () => {
-  const sessions = [0, 1, 2].map((i) => ({ id: `s${i}`, status: 'idle', at: 1, title: 'x'.repeat(40), step: 'y'.repeat(40) }));
-  const fat = { now: 1, online: true, status: 'idle', title: 't', sessions, plan: { tasks: [{ id: 'a', title: 'z'.repeat(80), state: 'done' }] }, junk: 'q'.repeat(OPENCODE_MAX_BYTES) };
-  const f = fitOpenCodeToLimit({ ...fat, junk: 'q'.repeat(OPENCODE_MAX_BYTES - 700) });
-  assert.ok(Buffer.byteLength(JSON.stringify(f)) <= OPENCODE_MAX_BYTES);
-  assert.ok(!f.sessions || f.sessions.length <= 3);
-});
-check('枢纽：sessions 跟随 source（local 用本机的；spoke 用投稿端的）', () => {
-  clearSpokeOpenCodeFrames();
-  const localFrame = { now: 1, online: true, status: 'idle', sessions: [{ id: 'L1', status: 'idle', at: 1, title: '本机会话' }] };
-  putSpokeOpenCodeFrame('macbook', { now: 1, online: true, status: 'running', sessions: [{ id: 'M1', status: 'running', at: 2, title: '投稿会话' }] }, { receivedAt: 950 });
-  const loc = resolveOpenCodeForTv({ opencodeSource: 'local', localFrame, now: 1000 });
-  assert.equal(loc.source.kind, 'local');
-  assert.equal(loc.sessions[0].id, 'L1');
-  const sp = resolveOpenCodeForTv({ opencodeSource: 'spoke:macbook', localFrame, now: 1000 });
-  assert.equal(sp.source.kind, 'spoke');
-  assert.equal(sp.sessions[0].id, 'M1');
-  const stale = resolveOpenCodeForTv({ opencodeSource: 'spoke:macbook', localFrame, now: 999_000 });
-  assert.equal(stale.source.kind, 'local');
-  assert.equal(stale.sessions[0].id, 'L1');
-});
-check('投稿体 sanitize：sessions 只收数组、≤3 行、白名单字段、非法 status → idle', () => {
-  const { frame } = sanitizeSpokeOpenCodePayload({
-    online: true, status: 'idle', deviceId: 'macbook', now: 1,
-    sessions: [
-      { id: 'a', status: 'bogus', at: 5, title: 't', evil: 'x'.repeat(100) },
-      { id: 'b', status: 'running', at: 6 }, { id: 'c', status: 'done', at: 7 }, { id: 'd', status: 'done', at: 8 }, 'junk',
-    ],
-  });
-  assert.equal(frame.sessions.length, 3);
-  assert.equal(frame.sessions[0].status, 'idle');
-  assert.equal('evil' in frame.sessions[0], false);
-  const { frame: f2 } = sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'macbook', sessions: 'nope' });
-  assert.equal('sessions' in f2, false);
-});
-
-group('rich 档（大屏监控）');
-check('rich 快照：tools/sessions/tasks 上限放宽、title 截断放宽', () => {
-  const mk = (rich) => buildOpenCodeSnapshot({
-    now: 1, rich,
-    session: { id: 's', title: '题'.repeat(200), directory: '/p/proj', time_created: 0, time_updated: 1, idle_outcome: 'succeeded', time_idle: 1 },
-    todos: Array.from({ length: 20 }, (_, i) => ({ position: i, content: `任务${i}`, status: 'pending' })),
-    messages: [{ id: 'm', time_updated: 1, data: { content: Array.from({ length: 30 }, (_, i) => ({
-      type: 'tool', id: `c${i}`, name: 'edit', state: { status: 'completed', input: { path: `a/文件${i}.mjs` } },
-    })) } }],
-    sessions: Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, status: 'idle', at: i })),
-  });
-  const thin = mk(false);
-  const rich = mk(true);
-  assert.equal(thin.tools.length, 8);
-  assert.equal(thin.plan.tasks.length, 8);
-  assert.equal(thin.sessions.length, 3);
-  assert.equal(thin.title.length, 81); // 80 + …
-  assert.equal(rich.tools.length, RICH_LIMITS.tools);
-  assert.equal(rich.plan.tasks.length, RICH_LIMITS.tasks);
-  assert.equal(rich.sessions.length, RICH_LIMITS.sessions);
-  assert.equal(rich.title.length, 161); // 160 + …
-});
-check('rich sanitize：32KB 内全收（tools 24 不被砍）；超长字段被截断收下', () => {
-  const tools = Array.from({ length: 24 }, (_, i) => ({ id: `t${i}`, name: 'edit', status: 'ok', at: 1, target: 'x'.repeat(20) }));
-  const ok = sanitizeSpokeOpenCodePayload({ online: true, status: 'running', deviceId: 'mb', now: 1, tools }, { rich: true });
-  assert.equal(ok.frame.tools.length, 24);
-  // 32KB 以上的 fat 帧：白名单内字段逐项截断（target ≤200 码位），整帧收下且有界
-  const fat = { online: true, status: 'running', deviceId: 'mb', now: 1,
-    tools: tools.map((t) => ({ ...t, target: '巨'.repeat(600) })) };
-  const squeezed = sanitizeSpokeOpenCodePayload(fat, { rich: true });
-  assert.equal(squeezed.frame.tools.length, 24);
-  assert.ok(squeezed.frame.tools.every((t) => Array.from(t.target).length <= 201));
-  assert.ok(Buffer.byteLength(JSON.stringify(squeezed.frame)) <= OPENCODE_RICH_MAX_BYTES);
-  // 33KB junk 超长**未知键**：白名单直接剥离（曾透传到电视出口），不再 413
-  const junked = sanitizeSpokeOpenCodePayload({ online: true, status: 'running', deviceId: 'mb', now: 1, junk: 'x'.repeat(33 * 1024) }, { rich: true });
-  assert.ok(!('junk' in junked.frame));
-});
-check('瘦档 sanitize：白名单外键剥离；超长 title 截断后 fit 到 6KB 内', () => {
-  const { frame } = sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'mb', now: 1 });
+group('枢纽（spoke 缓存与选源）');
+check('sanitize：白名单外键剥离（含 deviceId 自身）', () => {
+  const { frame } = sanitizeSpokeClaudePayload({ online: true, status: 'idle', deviceId: 'mb', now: 1, junk: 'x' });
   assert.equal(frame.status, 'idle');
-  const junked = sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'mb', now: 1, junk: 'x'.repeat(OPENCODE_MAX_BYTES) });
-  assert.ok(!('junk' in junked.frame));
-  const { frame: fitted, } = sanitizeSpokeOpenCodePayload({ online: true, status: 'idle', deviceId: 'mb', now: 1, title: '标'.repeat(20_000) });
-  assert.ok(Array.from(fitted.title).length <= 161); // 160 + …
-  assert.ok(Buffer.byteLength(JSON.stringify(fitted)) <= OPENCODE_MAX_BYTES);
+  assert.ok(!('junk' in frame));
+  assert.ok(!('deviceId' in frame));
+});
+check('sanitize：瘦档拟合 6KB，rich 档保留 24 条工具', () => {
+  const tools = Array.from({ length: 24 }, (_, i) => ({ id: `t${i}`, name: 'Edit', status: 'ok', at: 1, target: 'x'.repeat(20) }));
+  const thin = sanitizeSpokeClaudePayload({ online: true, status: 'running', now: 1, tools });
+  assert.ok(Buffer.byteLength(JSON.stringify(thin.frame)) <= CLAUDE_MAX_BYTES);
+  const rich = sanitizeSpokeClaudePayload({ online: true, status: 'running', now: 1, tools }, { rich: true });
+  assert.equal(rich.frame.tools.length, 24);
+});
+check('parseClaudeSource：local/auto/spoke 与非法回落', () => {
+  assert.deepEqual(parseClaudeSource('local'), { mode: 'local' });
+  assert.deepEqual(parseClaudeSource('auto'), { mode: 'auto' });
+  assert.deepEqual(parseClaudeSource('spoke:macbook'), { mode: 'spoke', deviceId: 'macbook' });
+  assert.deepEqual(parseClaudeSource('garbage!!'), { mode: 'local' });
+  assert.equal(normalizeClaudeSource('spoke:mb'), 'spoke:mb');
+});
+check('resolveClaudeForTv：local 用本机帧并盖 source', () => {
+  const out = resolveClaudeForTv({ claudeSource: 'local', localFrame: { now: 1, online: true, status: 'idle' }, now: 1000 });
+  assert.equal(out.source.kind, 'local');
+  assert.equal(out.status, 'idle');
+});
+check('resolveClaudeForTv：spoke 新鲜则用投稿帧，过期则回落本机', () => {
+  clearSpokeClaudeFrames();
+  const local = { now: 1, online: true, status: 'idle' };
+  putSpokeClaudeFrame('mb', { online: true, status: 'running', title: '笔记本' }, { receivedAt: 5000, tokenName: 'macbook' });
+  const fresh = resolveClaudeForTv({ claudeSource: 'spoke:mb', localFrame: local, now: 6000, staleMs: 45_000 });
+  assert.equal(fresh.source.kind, 'spoke');
+  assert.equal(fresh.title, '笔记本');
+  const stale = resolveClaudeForTv({ claudeSource: 'spoke:mb', localFrame: local, now: 60_000, staleMs: 45_000 });
+  assert.equal(stale.source.kind, 'local');
+});
+check('resolveClaudeForTv：auto 只在 spoke 新鲜且 running 时跟它', () => {
+  clearSpokeClaudeFrames();
+  const local = { now: 1, online: true, status: 'idle' };
+  putSpokeClaudeFrame('mb', { online: true, status: 'idle' }, { receivedAt: 5000 });
+  assert.equal(resolveClaudeForTv({ claudeSource: 'auto', localFrame: local, now: 6000 }).source.kind, 'local');
+  putSpokeClaudeFrame('mb', { online: true, status: 'running' }, { receivedAt: 7000 });
+  assert.equal(resolveClaudeForTv({ claudeSource: 'auto', localFrame: local, now: 8000 }).source.kind, 'spoke');
+});
+check('deviceId 首认领：别的 token 冒名投稿 → conflict', () => {
+  clearSpokeClaudeFrames();
+  assert.equal(putSpokeClaudeFrame('mb', { status: 'idle' }, { tokenName: 'tok-a' }), true);
+  assert.equal(putSpokeClaudeFrame('mb', { status: 'idle' }, { tokenName: 'tok-b' }), 'conflict');
+  assert.equal(putSpokeClaudeFrame('mb', { status: 'idle' }, { tokenName: 'tok-a' }), true);
+});
+check('非法 deviceId 拒收', () => {
+  assert.equal(putSpokeClaudeFrame('bad id!', { status: 'idle' }), false);
+});
+
+group('claudeSnapshotNow（真实文件 IO）');
+check('读临时 Claude 会话目录 → 字段完整（覆盖文件读取链路）', async () => {
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const fsx = await import('node:fs');
+  const tmp = fsx.mkdtempSync(path.join(os.tmpdir(), 'cc-tv-'));
+  const dir = path.join(tmp, 'proj');
+  fsx.mkdirSync(dir);
+  const t0 = Date.now() - 5000;
+  const iso = (ms) => new Date(ms).toISOString();
+  const lines = [
+    { type: 'ai-title', aiTitle: '真实链路' },
+    { type: 'user', promptSource: 'typed', cwd: '/p/real-proj', gitBranch: 'main', timestamp: iso(t0), message: { content: '做事' } },
+    { type: 'assistant', timestamp: iso(t0 + 1000), message: { id: 'm1', model: 'claude-opus-5-5', stop_reason: 'tool_use', usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'tool_use', id: 'c1', name: 'Read', input: { file_path: 'x.mjs' } }] } },
+  ];
+  fsx.writeFileSync(path.join(dir, 'sess1.jsonl'), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const prev = process.env.PGW_CC_DIR;
+  process.env.PGW_CC_DIR = tmp;
+  try {
+    const snap = await claudeSnapshotNow({ now: Date.now() });
+    assert.equal(snap.online, true);
+    assert.equal(snap.session.project, 'real-proj');
+    assert.equal(snap.session.branch, 'main');
+    assert.equal(snap.session.id, 'sess1');
+    assert.ok(['running', 'waiting'].includes(snap.status), 'status=' + snap.status);
+    assert.ok(Buffer.byteLength(JSON.stringify(snap)) <= CLAUDE_MAX_BYTES);
+  } finally {
+    if (prev === undefined) delete process.env.PGW_CC_DIR; else process.env.PGW_CC_DIR = prev;
+    fsx.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 group('CIDR 空前缀笔误 / Host 裸 IPv6（fail-open 修复）');
@@ -741,5 +683,6 @@ check('hostAllowed 认裸 IPv6（无方括号 ::1）与 mapped v4', () => {
   assert.equal(hostAllowed('evil.example.com'), false);
 });
 
+await settle();
 console.log(`\n结果: ${passed} 通过, ${failures.length} 失败${failures.length ? ` — ${failures.join(' ; ')}` : ''}`);
 process.exit(failures.length ? 1 : 0);

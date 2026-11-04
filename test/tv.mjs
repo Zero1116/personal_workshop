@@ -1,6 +1,6 @@
 // 电视工作台监听（gateway.tv）端到端测试：起一个网关实例（临时目录配置），验证
 //   - 默认关闭：不配 gateway.tv（或 enabled=false / tokens 为空）时 8490 不监听
-//   - 白名单：/tv/v1/snapshot、/tv/v1/opencode、/tv/v1/health 之外一律 404（含 /admin/*、/v1/*）
+//   - 白名单：/tv/v1/snapshot、/tv/v1/claude、/tv/v1/health 之外一律 404（含 /admin/*、/v1/*）
 //   - 鉴权：无 token / 错 token → 401；clientToken 不能当 TV token 用
 //   - 来源：非私网（这里用 127.0.0.2——回环但不默认在白名单里）→ 403
 //   - Host 反 rebinding：外部域名 Host → 403
@@ -145,22 +145,22 @@ try {
     check('第二枚 TV token 独立可用', both.status === 200, `got ${both.status}`);
   }
 
-  console.log('— OpenCode 战况 /tv/v1/opencode —');
+  console.log('— Claude Code 战况 /tv/v1/claude —');
   {
-    const r = await fetch(`${TV}/tv/v1/opencode`, { headers: tvHeaders() });
+    const r = await fetch(`${TV}/tv/v1/claude`, { headers: tvHeaders() });
     const raw = await r.text();
     let body = null;
     try { body = JSON.parse(raw); } catch {}
-    check('opencode → 200', r.status === 200, String(r.status));
-    check('opencode 带 ETag', /^"[^"]+"$/.test(r.headers.get('etag') || ''), r.headers.get('etag'));
-    check('opencode online + status 合法', body && body.online === true && ['idle','running','waiting','done','failed'].includes(body.status), raw.slice(0, 200));
-    check('opencode 体积 ≤ 6 KB', Buffer.byteLength(raw) <= 6144, `${Buffer.byteLength(raw)} bytes`);
+    check('claude → 200', r.status === 200, String(r.status));
+    check('claude 带 ETag', /^"[^"]+"$/.test(r.headers.get('etag') || ''), r.headers.get('etag'));
+    check('claude online + status 合法', body && body.online === true && ['idle','running','waiting','done','failed'].includes(body.status), raw.slice(0, 200));
+    check('claude 体积 ≤ 6 KB', Buffer.byteLength(raw) <= 6144, `${Buffer.byteLength(raw)} bytes`);
     const etag = r.headers.get('etag');
-    const again = await fetch(`${TV}/tv/v1/opencode`, { headers: { ...tvHeaders(), 'if-none-match': etag } });
-    check('opencode If-None-Match → 304', again.status === 304, `got ${again.status}`);
-    const noTok = await fetch(`${TV}/tv/v1/opencode`);
+    const again = await fetch(`${TV}/tv/v1/claude`, { headers: { ...tvHeaders(), 'if-none-match': etag } });
+    check('claude If-None-Match → 304', again.status === 304, `got ${again.status}`);
+    const noTok = await fetch(`${TV}/tv/v1/claude`);
     // 前面的错 token 轰炸可能已把 fail:IP 桶打满，此时 429 与 401 同属「未授权被拒」
-    check('opencode 无 token → 401 或 429', noTok.status === 401 || noTok.status === 429, `got ${noTok.status}`);
+    check('claude 无 token → 401 或 429', noTok.status === 401 || noTok.status === 429, `got ${noTok.status}`);
   }
 
   console.log('— 快照：字段裁剪 / 排序 / 服务端算好 runningMs —');
@@ -302,13 +302,13 @@ try {
     const v1WithTvToken = await fetch(`http://127.0.0.1:${GW_PORT}/v1/todos`, { headers: { 'x-aerial-token': TV_TOKEN } });
     check('TV token 不能访问主监听 /v1/todos', v1WithTvToken.status === 401, `got ${v1WithTvToken.status}`);
 
-    console.log('— /admin/tv-opencode 预览（含 rich 档）—');
-    const prevPlain = await fetch(`http://127.0.0.1:${GW_PORT}/admin/tv-opencode?preview=1`);
+    console.log('— /admin/tv-claude 预览（含 rich 档）—');
+    const prevPlain = await fetch(`http://127.0.0.1:${GW_PORT}/admin/tv-claude?preview=1`);
     const prevJson = await prevPlain.json().catch(() => null);
     check('预览 GET 200 且带 preview 帧', prevPlain.status === 200 && prevJson?.preview
       && typeof prevJson.preview.status === 'string' && prevJson.preview.source?.kind === 'local',
     `got ${prevPlain.status}`);
-    const prevRich = await fetch(`http://127.0.0.1:${GW_PORT}/admin/tv-opencode?preview=1&rich=1`);
+    const prevRich = await fetch(`http://127.0.0.1:${GW_PORT}/admin/tv-claude?preview=1&rich=1`);
     const richJson = await prevRich.json().catch(() => null);
     check('rich 预览 200 且带 rich 标记', prevRich.status === 200 && richJson?.rich === true
       && richJson?.preview && typeof richJson.preview.status === 'string',

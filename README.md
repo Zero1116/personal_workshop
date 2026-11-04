@@ -141,7 +141,7 @@ curl http://127.0.0.1:8484/v1/chat/completions \
 
 目录缓存 TTL 10 分钟，失败负缓存 30 秒，**刷新失败时旧目录沿用最多 1 小时**——一次上游抖动不会把裸名路由打回 `defaultProvider`。所以「刚加的模型看不到」等十分钟是正常的。401 重试按 provider 分：CANNWork 强制跳缓存重取 VK 再试一次，静态 token 不重试，403（账号权限）一律不重试直接透传。
 
-**热加载边界**——不用重启：`clientToken`、`providers[]` 全部字段（含 `enabled`）、`routing`、`pricing`、`workbench`、`monitors`、`upstreamHeadersTimeoutMs`、`tv.tokens/allowedCidrs/maxPerMinute/cacheSeconds/opencodeSource`、`sync.tokens/allowedCidrs/maxPerMinute`、`syncClient.publishOpenCode`。**必须重启**：`gateway.port`、`gateway.maxBodyMB`、`tv.enabled/port/bind`、`sync.enabled/port/bind`、`syncClient.enabled/url/token/intervalSec/push/deviceId`。
+**热加载边界**——不用重启：`clientToken`、`providers[]` 全部字段（含 `enabled`）、`routing`、`pricing`、`workbench`、`monitors`、`upstreamHeadersTimeoutMs`、`tv.tokens/allowedCidrs/maxPerMinute/cacheSeconds/claudeSource`、`sync.tokens/allowedCidrs/maxPerMinute`、`syncClient.publishClaude`。**必须重启**：`gateway.port`、`gateway.maxBodyMB`、`tv.enabled/port/bind`、`sync.enabled/port/bind`、`syncClient.enabled/url/token/intervalSec/push/deviceId`。
 
 管理台「配置」页可直接增删改供应商（写前整体校验、防自环、原子落盘；token 只显示掩码、编辑留空即沿用），保存即热生效。
 
@@ -152,7 +152,7 @@ curl http://127.0.0.1:8484/v1/chat/completions \
 | 组 | 视图 | 内容 |
 |---|---|---|
 | 工作台 | `#home` 首屏（默认落地） | 左待办右订阅卡：未完成待办、今日完成、每订阅花费与额度环 |
-| | `#opencode` | OpenCode 战况墙（idle/running/done）、电视预览、全屏大屏监控（`#monitor`） |
+| | `#claude` | Claude Code 战况墙（running/waiting/done）、电视预览、全屏大屏监控（`#monitor`） |
 | | `#todos` 待办 | 增删改、子项、详情、时段、筛选与搜索、清理已完成 |
 | | `#report` 汇报 | 生成、进度、Markdown 预览、复制/下载、历史、远程项目标签 |
 | 管理台 | `#overview` 总览 | 订阅上游卡（凭证体检）、模型 chips、今日速览、显示器输入源 |
@@ -209,11 +209,11 @@ Copy-Item -Recurse -Force .\skills\workbench-todos "$HOME\.claude\skills\workben
         "cacheSeconds": 5, "maxPerMinute": 30 }
 ```
 
-- 只认 `GET /tv/v1/snapshot`、`/tv/v1/opencode`、`/tv/v1/health`，其余一律 404；支持 ETag → 304 与 gzip。
+- 只认 `GET /tv/v1/snapshot`、`/tv/v1/claude`、`/tv/v1/health`，其余一律 404；支持 ETag → 304 与 gzip。
 - 四道门：Host 必须是 IP 字面量 / `localhost` / `.local` / `*.ts.net`（挡 DNS rebinding）→ 来源命中 `allowedCidrs` → 路由白名单 → `X-Aerial-Token` → 每 token 每分钟 30 次（失败尝试另按 IP 限速）。
 - 每台电视一枚 token，与 `clientToken` 相同会在加载时被丢弃；吊销 = 从数组删掉，下一请求即 401。`enabled/port/bind` 改完要重启，`tokens/allowedCidrs/maxPerMinute` 热生效。
 - 快照由 `lib/tv-snapshot.mjs` 现算：不含 `spans/perf/days/prices`，`runningMs`、`doneToday` 由服务端算好（电视不做时间戳推导）。ETag 只哈希数据本身、不含 `now`/`runningMs`，否则每分钟都 304 不命中。
-- `opencodeSource` = `local` | `auto` | `spoke:<deviceId>`；spoke 经 `PUT /sync/v1/opencode` 投稿（瘦 6KB 电视帧 + rich 32KB 大屏监控帧，先瘦后 rich，同 deviceId 覆盖）。
+- `claudeSource` = `local` | `auto` | `spoke:<deviceId>`；spoke 经 `PUT /sync/v1/claude` 投稿（瘦 6KB 电视帧 + rich 32KB 大屏监控帧，先瘦后 rich，同 deviceId 覆盖）。数据源是 `~/.claude/projects/*.jsonl`，**不需要 sqlite3**。
 - 威胁模型：家庭 LAN 上是明文 HTTP，同网段可嗅探 token；它能读到的只有待办标题/项目/紧急度/备注前 80 字与今日用量，不能调模型、改配置或读凭证。别把 `bind` 改成公网可达地址。
 
 ### 7.2 双机同步（`gateway.sync`）
@@ -227,10 +227,10 @@ Copy-Item -Recurse -Force .\skills\workbench-todos "$HOME\.claude\skills\workben
                 "intervalSec": 15, "push": true }                                          // 客户机
 ```
 
-- 白名单：`GET /sync/v1/health|snapshot|config|stats|opencode`、`POST /sync/v1/todos|stats`、`PUT|PATCH /sync/v1/config`、`PATCH|PUT|DELETE /sync/v1/todos/:id`、`PUT /sync/v1/opencode[?rich=1]`；其余（含 `/admin/*`、`/v1/*`）404。鉴权用 `Authorization: Bearer` 或 `X-Workshop-Token`，token 不得与 `clientToken` / TV token 相同。
+- 白名单：`GET /sync/v1/health|snapshot|config|stats|claude`、`POST /sync/v1/todos|stats`、`PUT|PATCH /sync/v1/config`、`PATCH|PUT|DELETE /sync/v1/todos/:id`、`PUT /sync/v1/claude[?rich=1]`；其余（含 `/admin/*`、`/v1/*`）404。鉴权用 `Authorization: Bearer` 或 `X-Workshop-Token`，token 不得与 `clientToken` / TV token 相同。
 - 快照 `?since=` 增量。**两种 rev 不是一回事**：待办快照的 `rev` = 该条 `updated_at`；配置快照的 `rev` = 可共享内容的 sha256 指纹（内容不变 rev 就不变）。PATCH 带过期 `rev` → 409；删除走 30 天墓碑，删除幂等（再删 204），撞墓碑按 LWW 复活。
 - 同步范围：`providers` / `routing` / `pricing` / `workbench` / `gateway`（剔除角色键 sync、syncClient、tv）。**`monitors` 永不同步**——它描述这台机器接了哪块屏、走哪个 VCP，搬过去只会让那台的 DDC 调用全部失败；它也不进配置 rev 指纹，改显示屏名字不会让两台机器互相覆盖。
-- `enabled/url/token/intervalSec/push/deviceId` 改完需重启，`publishOpenCode` 热生效。自检：`curl -H "X-Workshop-Token: <token>" http://<枢纽IP>:8491/sync/v1/snapshot | head -c 600`。
+- `enabled/url/token/intervalSec/push/deviceId` 改完需重启，`publishClaude` 热生效。自检：`curl -H "X-Workshop-Token: <token>" http://<枢纽IP>:8491/sync/v1/snapshot | head -c 600`。
 
 ### 7.3 显示器输入源切换
 
@@ -317,7 +317,7 @@ Get-Content "$env:LOCALAPPDATA\personal-gateway\logs\proxy.err.log" -Tail 50
 
 **管理台**（以下均仅回环 Host；带 ✱ 的写操作另强制 `application/json`）：
 
-`GET /admin/log` · `GET /admin/config`（含网关 token）· `GET /admin/stats` · `GET /admin/home` · `POST /admin/restart|stop`（只要求 POST + 回环，靠 `sec-fetch-site` 挡跨站，**不要求 JSON**）· `GET /admin/monitors` · `POST /admin/monitors/switch ✱|rename ✱` · `POST /admin/workbench/remote-projects ✱` · `GET /admin/tv-opencode`、`POST /admin/tv-opencode ✱`（`?preview=1&rich=1`）· `POST /admin/report/generate ✱` · `GET /admin/report/job|list|:id`、`DELETE /admin/report/:id` · `GET /admin/providers`、`POST /admin/providers ✱`、`PUT /admin/providers/:id ✱`、`DELETE /admin/providers/:id`、`POST /admin/providers/:id/check ✱`。
+`GET /admin/log` · `GET /admin/config`（含网关 token）· `GET /admin/stats` · `GET /admin/home` · `POST /admin/restart|stop`（只要求 POST + 回环，靠 `sec-fetch-site` 挡跨站，**不要求 JSON**）· `GET /admin/monitors` · `POST /admin/monitors/switch ✱|rename ✱` · `POST /admin/workbench/remote-projects ✱` · `GET /admin/tv-claude`、`POST /admin/tv-claude ✱`（`?preview=1&rich=1`）· `POST /admin/report/generate ✱` · `GET /admin/report/job|list|:id`、`DELETE /admin/report/:id` · `GET /admin/providers`、`POST /admin/providers ✱`、`PUT /admin/providers/:id ✱`、`DELETE /admin/providers/:id`、`POST /admin/providers/:id/check ✱`。
 
 ### B. 环境变量
 
@@ -340,13 +340,13 @@ Get-Content "$env:LOCALAPPDATA\personal-gateway\logs\proxy.err.log" -Tail 50
 | `PGW_EXCLUDE_MODELS` | 空 | 逗号分隔，追加到各 provider 的隐藏模型 |
 | `PGW_CC_DIR` | `~/.claude/projects` | 汇报数据源：Claude Code |
 | `PGW_ZCODE_DB` | `~/.zcode/cli/db/db.sqlite` | 汇报数据源：zcode |
-| `PGW_OPENCODE_DB` | `~/.local/share/opencode/opencode.db` | 汇报/电视墙数据源：opencode |
+| `PGW_OPENCODE_DB` | `~/.local/share/opencode/opencode.db` | 汇报数据源：opencode |
 | `PGW_CURSOR_DIR` | `~/.cursor/projects` | 汇报数据源：Cursor |
 | `PGW_SQLITE3` | 查 PATH | sqlite3 CLI 路径 |
 | `PGW_M1DDC` | 空（Windows 不可用） | 显示器切源工具；指向兼容 DDC 工具可启用 |
 | `PGW_REPORT_RETRY_DELAY_MS` | `1500` | 报告总结失败重试间隔 |
 | `PGW_REPORT_BODY_TIMEOUT_MS` | `120000` | 报告上游响应体读取 deadline |
-| `PGW_OPENCODE_TV_DEMO` | 空 | 设 `1` 强制电视演示帧（联调用） |
+| `PGW_CLAUDE_TV_DEMO` | 空 | 设 `1` 强制电视演示帧（联调用） |
 | `PGW_RUNTIME_DIR` | `%LOCALAPPDATA%\personal-gateway` | **仅 Windows 脚本**：运行时目录（不认旧名） |
 | `PGW_SKIP_LAUNCHCTL` | 空 | 已随 macOS 部署脚本移除；仍被解析但无副作用 |
 | `PGW_PROXY_URL` / `PGW_CREDS_DIR` / `PGW_CREDS_FILE` | 见脚本 | `scripts/cannbot-creds.sh` 的网关地址与凭证落点 |
@@ -374,4 +374,4 @@ Get-Content "$env:LOCALAPPDATA\personal-gateway\logs\proxy.err.log" -Tail 50
 
 ### D. 设计文档
 
-`docs/superpowers/specs/`（与 `plans/` 成对）：工作台、子项、统一外壳、首屏、显示器切源。`2026-10-29-todo-time-spans-design.md` 记录了「时段归属」上线即被推翻、改由模型判断归属的完整决策史；`docs/tv-opencode-multisource-draft.md` 是多源电视墙的草案与落地说明。实现级约束（模块职责、为什么这么写）见 `CLAUDE.md`。
+`docs/superpowers/specs/`（与 `plans/` 成对）：工作台、子项、统一外壳、首屏、显示器切源。`2026-10-29-todo-time-spans-design.md` 记录了「时段归属」上线即被推翻、改由模型判断归属的完整决策史；`docs/tv-claude-multisource-draft.md` 是多源电视墙的草案与落地说明。实现级约束（模块职责、为什么这么写）见 `CLAUDE.md`。

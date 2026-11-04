@@ -300,13 +300,13 @@ try {
     const cgj = await cfgGet.json();
     check('GET config → 200 且无 gateway.sync 键', cfgGet.status === 200 && cgj.rev && cgj.gateway && cgj.gateway.sync === undefined && Array.isArray(cgj.providers), JSON.stringify({ rev: cgj.rev, keys: Object.keys(cgj.gateway||{}) }).slice(0, 160));
 
-    console.log('— OpenCode 投稿（瘦帧 + rich 帧）—');
+    console.log('— Claude 投稿（瘦帧 + rich 帧）—');
     {
       const mkTools = (n, targetLen) => Array.from({ length: n }, (_, i) => ({
         id: `t${i}`, name: 'edit', status: 'ok', at: 1, target: 'x'.repeat(targetLen),
       }));
       // 瘦帧：6KB 契约不变
-      const thinPut = await fetch(`${SYNC}/sync/v1/opencode`, {
+      const thinPut = await fetch(`${SYNC}/sync/v1/claude`, {
         method: 'PUT',
         headers: { ...syncHeaders(), 'content-type': 'application/json' },
         body: JSON.stringify({ online: true, status: 'running', title: '瘦帧', deviceId: 'macbook-test', now: 1, tools: mkTools(8, 20) }),
@@ -314,25 +314,25 @@ try {
       const tj = await thinPut.json();
       check('PUT 瘦帧 → 200', thinPut.status === 200 && tj.ok === true && tj.deviceId === 'macbook-test', JSON.stringify(tj).slice(0, 120));
       // rich 帧：24 个工具在 32KB 内全收
-      const richPut = await fetch(`${SYNC}/sync/v1/opencode?rich=1`, {
+      const richPut = await fetch(`${SYNC}/sync/v1/claude?rich=1`, {
         method: 'PUT',
         headers: { ...syncHeaders(), 'content-type': 'application/json' },
         body: JSON.stringify({ online: true, status: 'running', title: '富帧', deviceId: 'macbook-test', now: 1, tools: mkTools(24, 20) }),
       });
       const rj = await richPut.json();
       check('PUT rich 帧 → 200 且缓存富帧', richPut.status === 200 && rj.ok === true, JSON.stringify(rj).slice(0, 120));
-      const listAfterRich = await fetch(`${SYNC}/sync/v1/opencode`, { headers: syncHeaders() });
+      const listAfterRich = await fetch(`${SYNC}/sync/v1/claude`, { headers: syncHeaders() });
       const lj = await listAfterRich.json();
       check('rich 投稿后 GET 列表 title=富帧', lj.spokes?.some((s) => s.deviceId === 'macbook-test' && s.title === '富帧'), JSON.stringify(lj.spokes ?? []).slice(0, 160));
       // 未知 junk 键：白名单剥离 → 200（曾透传到电视出口；超限 413 语义随白名单
       // 改为「白名单内字段超长 → 截断收下」，出口仍有 6KB 终检兜底）
-      const thinFat = await fetch(`${SYNC}/sync/v1/opencode`, {
+      const thinFat = await fetch(`${SYNC}/sync/v1/claude`, {
         method: 'PUT',
         headers: { ...syncHeaders(), 'content-type': 'application/json' },
         body: JSON.stringify({ online: true, status: 'idle', deviceId: 'macbook-test', now: 1, junk: 'x'.repeat(7 * 1024) }),
       });
       check('瘦路径 junk 键被白名单剥离 → 200', thinFat.status === 200, `got ${thinFat.status}`);
-      const richFat = await fetch(`${SYNC}/sync/v1/opencode?rich=1`, {
+      const richFat = await fetch(`${SYNC}/sync/v1/claude?rich=1`, {
         method: 'PUT',
         headers: { ...syncHeaders(), 'content-type': 'application/json' },
         // 传输上限 34KB 之内：junk 剥离 + 超长 title 截断都发生在 sanitize 层
@@ -340,7 +340,7 @@ try {
       });
       const rfj = await richFat.json().catch(() => ({}));
       check('rich 路径 junk 剥离 + 超长 title 截断 → 200', richFat.status === 200 && rfj.ok === true, `got ${richFat.status}`);
-      const listAfterFat = await fetch(`${SYNC}/sync/v1/opencode`, { headers: syncHeaders() });
+      const listAfterFat = await fetch(`${SYNC}/sync/v1/claude`, { headers: syncHeaders() });
       const lfj = await listAfterFat.json();
       const fatRow = lfj.spokes?.find((s) => s.deviceId === 'macbook-test');
       check('超长 title 入库被截到 ≤161 码位', fatRow && Array.from(String(fatRow.title || '')).length <= 161, JSON.stringify(fatRow ?? {}).slice(0, 160));
