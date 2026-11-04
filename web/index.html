@@ -807,7 +807,7 @@
         <button class="grouphead" data-group-toggle="workbench" aria-expanded="true" aria-controls="sub-workbench"><span class="caret">▾</span><span class="gname">工作台</span></button>
         <div class="groupsub" id="sub-workbench">
           <a class="viewbtn" href="#home"><span class="vname">首屏</span></a>
-          <a class="viewbtn" href="#claude"><span class="vname">Claude</span></a>
+          <a class="viewbtn" href="#claude"><span class="vname">电视墙</span></a>
           <a class="viewbtn" href="#todos"><span class="vname">待办</span><span class="vbadge" id="vbTodoN" hidden></span></a>
           <a class="viewbtn" href="#report"><span class="vname">汇报</span><span class="vbadge" id="vbReport" hidden></span></a>
         </div>
@@ -1079,7 +1079,7 @@
           </div>
           <div class="home-quicklinks">
             <a href="#todos">进入待办 <span>→</span></a>
-            <a href="#claude">Claude Code / 电视墙 <span>→</span></a>
+            <a href="#claude">电视墙 <span>→</span></a>
             <a href="#report">生成工作汇报 <span>↗</span></a>
           </div>
           <div class="home-list-head"><b>当前队列</b><span>Focus queue</span></div>
@@ -1101,7 +1101,7 @@
     <section class="view" data-view="claude">
       <section class="sec">
         <div class="sechead">
-          <span class="idx">00</span><h2>Claude Code · 电视墙</h2><span class="en">TV wall</span>
+          <span class="idx">00</span><h2>电视墙</h2><span class="en">TV wall</span>
           <span class="spacer"></span>
           <span class="note" id="ocNote">按角色显示：枢纽切源 · 投稿端开关</span>
           <button type="button" id="ocRefresh">刷新</button>
@@ -1112,7 +1112,7 @@
               <span class="oc-role" id="ocRoleBadge"><i></i><span>…</span></span>
               <span class="oc-meta" id="ocHostMeta">…</span>
             </div>
-            <h3 id="ocHeroTitle">Claude Code 上墙</h3>
+            <h3 id="ocHeroTitle">上墙</h3>
             <p class="oc-lead" id="ocHeroLead">加载中…</p>
             <div class="oc-explain" id="ocExplain"></div>
           </div>
@@ -1473,7 +1473,7 @@ function ocIsHub(d) { return !!d?.tvEnabled && !ocIsSpoke(d); }
 /** 枢纽视角的源文案（「本机」= mini）。 */
 function ocHubSourceLabel(src) {
   const s = String(src || 'local');
-  if (s === 'local') return '本机 Claude Code';
+  if (s === 'local') return '本机会话';
   if (s === 'auto') return '自动（有 MacBook 在投且 running 则跟它，否则本机）';
   if (s.startsWith('spoke:')) return `MacBook 投稿（${s.slice(6)}）`;
   return s;
@@ -1482,7 +1482,7 @@ function ocHubSourceLabel(src) {
 /** 投稿端只读源文案：禁止「本机（mini）」；local 明确写成 Mac mini。 */
 function ocSpokeSourceLabel(src) {
   const s = String(src || 'local');
-  if (s === 'local') return '枢纽机自己的 Claude Code';
+  if (s === 'local') return '枢纽机自己的会话';
   if (s === 'auto') return '自动（由 Mac mini 在「本机 / MacBook 投稿」间切换）';
   if (s.startsWith('spoke:')) return `MacBook 投稿（${s.slice(6)}）`;
   return s;
@@ -1515,7 +1515,7 @@ function renderClaudeExplain(d) {
   if (ocIsSpoke(d)) {
     if (badge) { badge.className = 'oc-role spoke'; badge.innerHTML = '<i></i><span>投稿端 · MacBook</span>'; }
     if (title) title.textContent = '向 mini 投稿，不上墙决策';
-    if (lead) lead.textContent = '电视永远只连 Mac mini。本页不切信号源——「本机」只表示这台 MacBook 要不要把 Claude 帧发给 mini。';
+    if (lead) lead.textContent = '电视永远只连 Mac mini。本页不切信号源——「本机」只表示这台 MacBook 要不要把本机会话发给 mini。';
     if (note) note.textContent = '投稿端：本机投稿开关 · 源由 mini 决定';
     if (ctrlTitle) ctrlTitle.textContent = '本机投稿';
     if (el) el.innerHTML = `<ul>
@@ -1525,13 +1525,13 @@ function renderClaudeExplain(d) {
       </ul>`;
   } else if (ocIsHub(d)) {
     if (badge) { badge.className = 'oc-role hub'; badge.innerHTML = '<i></i><span>枢纽 · Mac mini</span>'; }
-    if (title) title.textContent = '客厅电视看谁的 Claude Code';
-    if (lead) lead.textContent = '电视只配对本机。在这里选择墙上跟「本机 Claude Code」、还是跟「MacBook 投稿」，或交给自动。';
+    if (title) title.textContent = '客厅电视看谁的会话';
+    if (lead) lead.textContent = '电视只配对本机。在这里选择墙上跟「本机会话」、还是跟「MacBook 投稿」，或交给自动。';
     if (note) note.textContent = '枢纽：切源 · 看 MacBook 投稿状态';
     if (ctrlTitle) ctrlTitle.textContent = '信号源';
     if (el) el.innerHTML = `<ul>
         <li>电视<strong>永远只连本机</strong>（地址/端口不变）。</li>
-        <li>选项：<strong>本机 Claude Code</strong> / <strong>MacBook 投稿</strong> / <strong>自动</strong>。</li>
+        <li>选项：<strong>本机会话</strong> / <strong>MacBook 投稿</strong> / <strong>自动</strong>。</li>
         <li>MacBook 须先打开投稿，墙上才会有笔记本会话可切。</li>
       </ul>`;
   } else {
@@ -1702,7 +1702,7 @@ function renderClaudePage(d) {
   // 枢纽下拉：「本机」= 这台 mini；绝不写「本机（mini）」这种给笔记本看的歧义句
   const optHtml = [...options].map((id) => {
     const val = (id === 'local' || id === 'auto') ? id : `spoke:${id}`;
-    const label = id === 'local' ? '本机 Claude Code'
+    const label = id === 'local' ? '本机会话'
       : id === 'auto' ? '自动'
       : `MacBook 投稿（${id}）`;
     return `<option value="${esc(val)}"${val === src ? ' selected' : ''}>${esc(label)}</option>`;
@@ -1741,7 +1741,7 @@ function renderClaudePage(d) {
         <span class="oc-tag ${pubOn ? 'on' : 'off'}">${pubOn ? '开' : '关（默认）'}</span>
         <button type="button" id="ocTogglePub">${pubOn ? '关闭本机投稿' : '打开本机投稿'}</button>
       </div>
-      <div class="dim" style="font-size:12px;margin-top:8px;line-height:1.45">这里的「本机」= <b>这台 MacBook</b>。打开后才会把本机 Claude Code 帧发给 mini。</div>
+      <div class="dim" style="font-size:12px;margin-top:8px;line-height:1.45">这里的「本机」= <b>这台 MacBook</b>。打开后才会把本机会话发给 mini。</div>
     </div>`;
   } else if (isHub) {
     body = `
