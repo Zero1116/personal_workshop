@@ -2194,12 +2194,14 @@ INSERT INTO event VALUES ('e8', 'ses_gone', 8, 'message.part.updated.1', ${j({ s
     check('大屏开着时轮询带 rich=1（小卡与面板同吃一份数据）',
       /\/admin\/tv-claude\?preview=1\$\{ocBoardOpen \? '&rich=1' : ''\}/.test(idxHtml)
         && /if \(curView !== 'claude' && !ocBoardOpen\) return/.test(idxHtml));
-    check('大屏渲染覆盖：工具时间线 / 任务 / 会话卡三块都有容器',
-      idxHtml.includes('id="ocBoardTools"') && idxHtml.includes('id="ocBoardTasks"')
+    check('大屏渲染覆盖：工具时间线 / 本会话统计 / 会话卡三块都有容器',
+      idxHtml.includes('id="ocBoardTools"') && idxHtml.includes('id="ocBoardStats"')
         && idxHtml.includes('id="ocBoardSessions"') && idxHtml.includes('id="ocBoardBar"'));
-    check('任务列表填满右卡（flex:1，不塌在顶上一条）',
-      /\.oc-board-card \.oc-tasks \{ flex: 1 1 auto; min-height: 0; overflow-y: auto; \}/.test(idxHtml)
-        && /id="ocBoardTasks" class="oc-tasks"/.test(idxHtml));
+    // 右卡从「计划任务」改成「本会话」：Claude Code 数据源不产 plan.tasks，
+    // 留着就是一张常年空着的卡（这正是版面松散的主因）。
+    check('右卡不再渲染空着的计划任务卡（改为本会话统计）',
+      !idxHtml.includes('id="ocBoardTasks"') && !idxHtml.includes('OC_TASK_MARK')
+        && /id="ocBoardStats"/.test(idxHtml));
     check('#monitor 深链：冷启动与 hashchange 都开面板；关面板归一回 #claude',
       /if \(h === 'monitor'\) return 'claude';/.test(idxHtml)
         && /if \(h === 'monitor'\) setOcBoard\(true\);/.test(idxHtml)
